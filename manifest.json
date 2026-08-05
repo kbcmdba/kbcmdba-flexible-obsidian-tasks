@@ -1,0 +1,10 @@
+{
+	"id": "table-of-tasks",
+	"name": "Table of Tasks",
+	"version": "0.1.0",
+	"minAppVersion": "1.4.0",
+	"description": "Interactive task checkboxes inside Markdown table cells, with support for custom task statuses ([ ], [x], [/], [-], and more).",
+	"author": "KB Benton",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}

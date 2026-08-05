@@ -1,0 +1,27 @@
+{
+	"name": "table-of-tasks",
+	"version": "0.1.0",
+	"description": "Interactive task checkboxes inside Markdown table cells.",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add manifest.json versions.json"
+	},
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"tasks",
+		"table",
+		"checkbox"
+	],
+	"author": "KB Benton",
+	"license": "GPL-2.0-only",
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"builtin-modules": "^3.3.0",
+		"esbuild": "^0.20.2",
+		"obsidian": "latest",
+		"typescript": "^5.4.5"
+	}
+}

@@ -1,0 +1,39 @@
+/* Table of Tasks - styling for task checkboxes rendered inside table cells. */
+
+.tot-task {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.4em;
+}
+
+.tot-task .tot-checkbox {
+	margin: 0;
+	cursor: pointer;
+	align-self: center;
+}
+
+.tot-task .tot-task-label {
+	cursor: default;
+}
+
+.tot-task.is-done .tot-task-label {
+	text-decoration: line-through;
+	opacity: 0.6;
+}
+
+/*
+ * Custom statuses ([/], [-], [>], [?], [!], ...) can't be shown by a native
+ * checkbox (checked/unchecked only), so surface the raw status character as a
+ * small badge. This is a theme-agnostic fallback; themes that style
+ * [data-task="..."] on their own will layer on top.
+ */
+.tot-task[data-task]:not([data-task=" "]):not([data-task="x"]):not([data-task="X"])::after {
+	content: attr(data-task);
+	align-self: center;
+	font-size: 0.7em;
+	line-height: 1;
+	padding: 0.05em 0.35em;
+	border-radius: 0.35em;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+}
