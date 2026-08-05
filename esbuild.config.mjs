@@ -3,7 +3,7 @@ import process from "process";
 import builtins from "builtin-modules";
 
 const banner = `/*
-Table of Tasks - bundled output. Do not edit directly.
+Flexible Tasks - bundled output. Do not edit directly.
 Edit main.ts and rebuild with: npm run build
 */`;
 

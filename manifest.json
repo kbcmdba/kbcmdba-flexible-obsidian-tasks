@@ -1,10 +1,10 @@
 {
-	"id": "table-of-tasks",
-	"name": "Table of Tasks",
-	"version": "0.1.0",
+	"id": "flexible-tasks",
+	"name": "Flexible Tasks",
+	"version": "0.9.0",
 	"minAppVersion": "1.4.0",
-	"description": "Interactive task checkboxes inside Markdown table cells, with support for custom task statuses ([ ], [x], [/], [-], and more).",
+	"description": "Interactive task checkboxes in Markdown table cells and lists, with custom statuses ([ ], [x], [/], [-], [>], [?], [!], and more) styled by your theme.",
 	"author": "KB Benton",
-	"authorUrl": "",
+	"authorUrl": "https://github.com/kbcmdba",
 	"isDesktopOnly": false
 }

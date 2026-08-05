@@ -1,23 +1,22 @@
-# Table of Tasks
+# Flexible Tasks
 
-An [Obsidian](https://obsidian.md) plugin that makes task checkboxes work **inside Markdown table cells** — something the format doesn't support natively.
+An [Obsidian](https://obsidian.md) plugin for interactive task checkboxes **inside Markdown table cells** — and custom task statuses everywhere, rendered by your theme.
 
 ## Why
 
-A Markdown table cell is inline-only, so a task like `- [ ] One` written inside a cell renders as dead text; Obsidian never turns it into a checkbox, and task plugins skip it. This plugin renders those cell tasks as real, interactive checkboxes and writes toggles back to the source file.
+A Markdown table cell is inline-only, so a task like `- [ ] One` written in a cell renders as dead text: Obsidian never turns it into a checkbox, and task plugins skip it. Flexible Tasks turns those cell tasks into real, interactive checkboxes and writes toggles back to the source file. It also adds a right-click status menu to ordinary block-list tasks, so you can set any status without retyping the marker.
 
-## Status
+## Features
 
-**v0.1.0 - early MVP.** Reading view only.
+- **Checkboxes in table cells** — the thing the Markdown format won't do. Click to toggle, right-click to set any status.
+- **Custom statuses** — `[ ]`, `[x]`, `[/]`, `[-]`, `[>]`, `[?]`, `[!]`, and any other single character round-trip faithfully in the source.
+- **Renders in both Reading view and Live Preview.**
+- **Defers to your theme.** The plugin puts a real checkbox carrying `data-task="<char>"` in place; your checkbox theme draws the status icon. Nothing is overridden.
+- **Off-book statuses stand out.** A character the plugin doesn't plan for is shown with the **Important** indicator instead of a plain check, so an unusual status never masquerades as done.
 
-- [x] Interactive checkboxes in table cells (reading view)
-- [x] Open status set - `[ ]`, `[x]`, `[/]`, `[-]`, `[>]`, `[?]`, `[!]`, and any other single character round-trip faithfully
-- [x] Left-click toggles done <-> to-do (model A)
-- [x] Right-click to set any status
-- [ ] Live Preview (editor) support
-- [ ] Column-level checkboxes
-- [ ] Multiple tasks per cell
-- [ ] Inline Markdown in task labels (bold/links)
+## Themes
+
+Status icons are drawn by your **checkbox theme**, not by the plugin. It works best with the [Minimal](https://minimal.guide/) theme, which this plugin is developed against; using other themes may yield different results. With the default theme (no checkbox styling) statuses render as plain checkboxes.
 
 ## Usage
 
@@ -30,17 +29,11 @@ Write a table whose cells contain tasks:
 | - [x] Two   | - [ ] Review   | - [-] Old idea |
 ```
 
-In reading view each `- [ ]` becomes a clickable checkbox. Left-click completes it; right-click opens a menu to set any status.
+Each `- [ ]` becomes a clickable checkbox. **Left-click** toggles done ↔ to-do; **right-click** opens a menu to set any status. In the editor (Live Preview / source), right-click a task line and use **Checkbox choices** to set a status.
 
-## Task status behavior (model A)
+## Settings
 
-- **Left-click** toggles between done (`[x]`) and to-do (`[ ]`) - the same as checkboxes everywhere else in Obsidian.
-- **Right-click** opens a menu to set any status directly.
-- Rendering is deferred to your theme: the plugin puts real checkboxes carrying `data-task="<char>"` in place, and your checkbox theme draws the status icon.
-
-## Themes
-
-Status icons are drawn by your **checkbox theme**, not by the plugin. It works best with the [Minimal](https://minimal.guide/) theme, which this plugin is developed against; using other themes may yield different results. A status character the plugin doesn't plan for is shown with the **Important** indicator so it stands out rather than looking done.
+- **Style block-list tasks too** — also add the right-click status menu to ordinary (non-table) list tasks in Reading view. On by default.
 
 ## Development
 
@@ -53,10 +46,10 @@ npm run build   # type-check + production bundle
 For a live dev loop, symlink this folder into a test vault's plugin directory:
 
 ```bash
-ln -s "$(pwd)" /path/to/TestVault/.obsidian/plugins/table-of-tasks
+ln -s "$(pwd)" /path/to/TestVault/.obsidian/plugins/flexible-tasks
 ```
 
-Then enable **Table of Tasks** in the vault's community-plugin settings and use "Reload app" (or the Hot-Reload plugin) after each build.
+Then enable **Flexible Tasks** in the vault's community-plugin settings and use "Reload app without saving" (or the Hot-Reload plugin) after each build.
 
 ## License
 

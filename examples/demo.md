@@ -1,4 +1,4 @@
-# Table of Tasks - demo
+# Flexible Tasks - demo
 
 Open this note in **reading view** with the plugin enabled.
 

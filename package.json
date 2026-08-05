@@ -1,7 +1,7 @@
 {
-	"name": "table-of-tasks",
-	"version": "0.1.0",
-	"description": "Interactive task checkboxes inside Markdown table cells.",
+	"name": "flexible-tasks",
+	"version": "0.9.0",
+	"description": "Interactive task checkboxes in Markdown table cells and lists, with custom statuses styled by your theme.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

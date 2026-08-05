@@ -45,25 +45,25 @@ const PLANNED = new Set([...MENU_STATUSES.map((s) => s.char), "X"]);
 const themeTask = (c: string): string => (PLANNED.has(c) ? c : "!");
 
 /** Flip to enable verbose console diagnostics during development. */
-const DEBUG = true;
+const DEBUG = false;
 const dlog = (...args: unknown[]): void => {
 	if (DEBUG) console.log("[FT]", ...args);
 };
 
-interface TableOfTasksSettings {
+interface FlexibleTasksSettings {
 	styleBlockTasks: boolean;
 }
-const DEFAULT_SETTINGS: TableOfTasksSettings = {
+const DEFAULT_SETTINGS: FlexibleTasksSettings = {
 	styleBlockTasks: true,
 };
 
-export default class TableOfTasksPlugin extends Plugin {
-	settings: TableOfTasksSettings = DEFAULT_SETTINGS;
+export default class FlexibleTasksPlugin extends Plugin {
+	settings: FlexibleTasksSettings = DEFAULT_SETTINGS;
 	private scanQueued = false;
 
 	async onload() {
 		await this.loadSettings();
-		this.addSettingTab(new TableOfTasksSettingTab(this.app, this));
+		this.addSettingTab(new FlexibleTasksSettingTab(this.app, this));
 
 		// Obsidian hands markdown post-processors DETACHED section fragments that
 		// may not contain the table, so we don't process through them. Instead we
@@ -337,7 +337,7 @@ export default class TableOfTasksPlugin extends Plugin {
 		const lines = content.split("\n");
 		const blocks = this.findTableBlocks(lines);
 		if (tableIndex >= blocks.length) {
-			new Notice("Table of Tasks: couldn't map the table to the source.");
+			new Notice("Flexible Tasks: couldn't map the table to the source.");
 			return;
 		}
 		const srcLineNo = blocks[tableIndex] + (rowIndex === 0 ? 0 : rowIndex + 1);
@@ -396,7 +396,7 @@ export default class TableOfTasksPlugin extends Plugin {
 			newChar,
 		});
 		if (target < 0) {
-			new Notice("Table of Tasks: couldn't map the task to the source.");
+			new Notice("Flexible Tasks: couldn't map the task to the source.");
 			return;
 		}
 		const rewritten = lines[target].replace(/\[.\]/, `[${newChar}]`);
@@ -435,10 +435,10 @@ export default class TableOfTasksPlugin extends Plugin {
 	}
 }
 
-class TableOfTasksSettingTab extends PluginSettingTab {
-	plugin: TableOfTasksPlugin;
+class FlexibleTasksSettingTab extends PluginSettingTab {
+	plugin: FlexibleTasksPlugin;
 
-	constructor(app: App, plugin: TableOfTasksPlugin) {
+	constructor(app: App, plugin: FlexibleTasksPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
