@@ -29,7 +29,16 @@ Write a table whose cells contain tasks:
 | - [x] Two   | - [ ] Review   | - [-] Old idea |
 ```
 
-Each `- [ ]` becomes a clickable checkbox. **Left-click** toggles done ↔ to-do; **right-click** opens a menu to set any status. In the editor (Live Preview / source), right-click a task line and use **Checkbox choices** to set a status.
+Each `- [ ]` becomes a clickable checkbox.
+
+## Setting a status
+
+Every status beyond a plain done/to-do toggle lives on the **right-click** — on both surfaces, so nothing is hidden behind a hotkey or command palette entry:
+
+- **Reading view** — **left-click** a checkbox to toggle done ↔ to-do; **right-click** it to open the status menu and choose any status (`[ ]`, `[x]`, `[/]`, `[-]`, `[>]`, `[?]`, `[!]`).
+- **Editor (Live Preview / source)** — **right-click** anywhere on a task line and choose **Checkbox choices**, then pick a status.
+
+In short: left-click is the quick done/to-do toggle; **right-click is how you reach the full status set.**
 
 ## Settings
 
