@@ -1,19 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-import {
-	Plugin,
-	MarkdownPostProcessorContext,
-	Menu,
-	Notice,
-	TFile,
-} from "obsidian";
+import { Plugin, Menu, Notice, TFile, MarkdownView } from "obsidian";
 
 /**
  * Matches a table cell whose text is a task: a list marker (-, *, +), then the
  * [x] status box with ANY single character inside, then an optional label.
- *
- * The status character set is deliberately OPEN (not a fixed whitelist) so that
- * theme-defined statuses like [/], [-], [>], [?] all render and round-trip.
+ * The status character set is deliberately OPEN so custom statuses ([/], [-],
+ * [>], [?], ...) all render and round-trip.
  */
 const TASK_CELL_RE = /^\s*[-*+]\s+\[(.)\]\s*(.*)$/;
 
@@ -30,27 +23,54 @@ const MENU_STATUSES: ReadonlyArray<{ char: string; label: string }> = [
 
 const isDone = (c: string): boolean => c === "x" || c === "X";
 
+/** Statuses that strike through the label (finished or abandoned work). */
+const STRIKETHROUGH = new Set(["x", "X", "-", ">"]);
+const isStruck = (c: string): boolean => STRIKETHROUGH.has(c);
+
 export default class TableOfTasksPlugin extends Plugin {
+	private scanQueued = false;
+
 	async onload() {
-		this.registerMarkdownPostProcessor((el, ctx) =>
-			this.renderTableTasks(el, ctx)
+		// Obsidian hands markdown post-processors DETACHED section fragments that
+		// may not contain the table, so we don't process through them. Instead we
+		// use render/layout events as a trigger and scan the attached reading-view
+		// containers directly.
+		this.registerMarkdownPostProcessor(() => this.queueScan());
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => this.queueScan())
 		);
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => this.queueScan())
+		);
+		this.app.workspace.onLayoutReady(() => this.queueScan());
 	}
 
-	/** Reading-view post-processor: turn task-shaped cell text into checkboxes. */
-	private renderTableTasks(el: HTMLElement, ctx: MarkdownPostProcessorContext) {
-		const tables = Array.from(el.querySelectorAll("table"));
-		for (const table of tables) {
-			const cells = Array.from(
-				table.querySelectorAll<HTMLTableCellElement>("td, th")
-			);
-			for (const cell of cells) {
+	/** Coalesce bursts of triggers into a single deferred scan. */
+	private queueScan() {
+		if (this.scanQueued) return;
+		this.scanQueued = true;
+		window.setTimeout(() => {
+			this.scanQueued = false;
+			this.scanReadingViews();
+		}, 50);
+	}
+
+	/** Scan every open markdown view's rendered content for table task cells. */
+	private scanReadingViews() {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView)) continue;
+			// Headers and already-decorated cells no longer contain "- [ ] ..."
+			// text, so they simply won't match - no extra guard needed.
+			const cells =
+				view.contentEl.querySelectorAll<HTMLTableCellElement>("td, th");
+			cells.forEach((cell) => {
 				const match = (cell.textContent ?? "").match(TASK_CELL_RE);
-				if (!match) continue;
-				const status = match[1];
-				const label = (match[2] ?? "").trim();
-				this.decorateCell(cell, status, label, ctx, el, table);
-			}
+				if (!match) return;
+				const table = cell.closest("table");
+				if (!table) return;
+				this.decorateCell(cell, match[1], (match[2] ?? "").trim(), view, table);
+			});
 		}
 	}
 
@@ -58,21 +78,16 @@ export default class TableOfTasksPlugin extends Plugin {
 		cell: HTMLTableCellElement,
 		status: string,
 		label: string,
-		ctx: MarkdownPostProcessorContext,
-		sectionEl: HTMLElement,
+		view: MarkdownView,
 		table: HTMLTableElement
 	) {
 		cell.empty();
 		const wrap = cell.createDiv({ cls: "tot-task task-list-item" });
 		wrap.dataset.task = status;
-		if (isDone(status)) wrap.addClass("is-done");
+		if (isStruck(status)) wrap.addClass("is-struck");
 
-		const box = wrap.createEl("input", {
-			cls: "task-list-item-checkbox tot-checkbox",
-			attr: { type: "checkbox" },
-		});
-		box.checked = isDone(status);
-		box.dataset.task = status;
+		const box = wrap.createSpan({ cls: "tot-box" });
+		this.paintBox(box, status);
 
 		wrap.createSpan({ cls: "tot-task-label", text: label });
 
@@ -81,28 +96,21 @@ export default class TableOfTasksPlugin extends Plugin {
 			evt.preventDefault();
 			const current = wrap.dataset.task ?? " ";
 			const next = isDone(current) ? " " : "x";
-			await this.writeStatus(ctx, sectionEl, table, cell, next, wrap, box);
+			await this.writeStatus(view, table, cell, next, wrap, box);
 		});
 
 		// Right-click: set any status.
 		wrap.addEventListener("contextmenu", (evt) => {
 			evt.preventDefault();
+			evt.stopPropagation();
 			const menu = new Menu();
 			for (const s of MENU_STATUSES) {
 				menu.addItem((item) =>
 					item
-						.setTitle(`${s.label}  [${s.char === " " ? " " : s.char}]`)
+						.setTitle(`${s.label}  [${s.char}]`)
 						.setChecked((wrap.dataset.task ?? " ") === s.char)
 						.onClick(async () => {
-							await this.writeStatus(
-								ctx,
-								sectionEl,
-								table,
-								cell,
-								s.char,
-								wrap,
-								box
-							);
+							await this.writeStatus(view, table, cell, s.char, wrap, box);
 						})
 				);
 			}
@@ -110,68 +118,78 @@ export default class TableOfTasksPlugin extends Plugin {
 		});
 	}
 
+	/** Paint a status box: empty for to-do, a check for done, else the raw char. */
+	private paintBox(box: HTMLElement, status: string) {
+		box.dataset.task = status;
+		// Highlight the box for any chosen status (anything other than to-do).
+		box.toggleClass("is-filled", status !== " ");
+		box.setText(status === " " ? "" : isDone(status) ? "✓" : status);
+	}
+
 	/**
-	 * Locate this cell in the source Markdown by its table position and rewrite
-	 * the [status] marker. The mapping is deterministic:
-	 *   - table source line 0 = header row
-	 *   - table source line 1 = delimiter (:---) row, which has NO rendered <tr>
-	 *   - so a DOM row at rowIndex r maps to source line
-	 *       lineStart + (r === 0 ? 0 : r + 1)
-	 *   - column c maps to the c-th pipe-delimited field
-	 *
-	 * Known limitations (MVP): assumes one table per rendered section, standard
-	 * leading/trailing pipes, and no escaped \| inside cells.
+	 * Rewrite the [status] marker for this cell in the source file. Maps the DOM
+	 * table position to the source Markdown:
+	 *   - identify which table by the DOM table's index within the view
+	 *   - within that block, DOM row r -> source line
+	 *       blockStart + (r === 0 ? 0 : r + 1)   (the +1 skips the :--- delimiter)
+	 *   - DOM column c -> the c-th pipe-delimited field
 	 */
 	private async writeStatus(
-		ctx: MarkdownPostProcessorContext,
-		sectionEl: HTMLElement,
+		view: MarkdownView,
 		table: HTMLTableElement,
 		cell: HTMLTableCellElement,
 		newChar: string,
 		wrap: HTMLElement,
-		box: HTMLInputElement
+		box: HTMLElement
 	) {
-		const info = ctx.getSectionInfo(table) ?? ctx.getSectionInfo(sectionEl);
-		if (!info) {
-			new Notice("Table of Tasks: couldn't locate the table in the source.");
-			return;
-		}
-
-		const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+		const file = view.file;
 		if (!(file instanceof TFile)) return;
 
 		const row = cell.parentElement as HTMLTableRowElement | null;
 		if (!row) return;
-		const rowIndex = row.rowIndex; // continuous across thead + tbody
-		const colIndex = cell.cellIndex; // within the row
+		const rowIndex = row.rowIndex;
+		const colIndex = cell.cellIndex;
 
-		const srcLineNo = info.lineStart + (rowIndex === 0 ? 0 : rowIndex + 1);
+		const domTables = Array.from(view.contentEl.querySelectorAll("table"));
+		const tableIndex = domTables.indexOf(table);
+		if (tableIndex < 0) return;
 
 		const content = await this.app.vault.read(file);
 		const lines = content.split("\n");
+		const blocks = this.findTableBlocks(lines);
+		if (tableIndex >= blocks.length) {
+			new Notice("Table of Tasks: couldn't map the table to the source.");
+			return;
+		}
+		const srcLineNo = blocks[tableIndex] + (rowIndex === 0 ? 0 : rowIndex + 1);
 		if (srcLineNo < 0 || srcLineNo >= lines.length) return;
 
 		const rewritten = this.rewriteCellStatus(lines[srcLineNo], colIndex, newChar);
-		if (rewritten === null) {
-			new Notice("Table of Tasks: couldn't find the task cell to update.");
-			return;
-		}
-		if (rewritten === lines[srcLineNo]) return; // nothing changed
+		if (rewritten === null || rewritten === lines[srcLineNo]) return;
 
 		// Optimistic UI update; the vault change re-renders and confirms.
 		wrap.dataset.task = newChar;
-		box.dataset.task = newChar;
-		box.checked = isDone(newChar);
-		wrap.toggleClass("is-done", isDone(newChar));
+		wrap.toggleClass("is-struck", isStruck(newChar));
+		this.paintBox(box, newChar);
 
 		lines[srcLineNo] = rewritten;
 		await this.app.vault.modify(file, lines.join("\n"));
 	}
 
+	/** Return the starting line index (header row) of each Markdown table block. */
+	private findTableBlocks(lines: string[]): number[] {
+		const starts: number[] = [];
+		// A delimiter row is only pipes/spaces/colons/dashes and has at least one dash.
+		const isDelim = (s: string) => /^[\s|:-]+$/.test(s) && s.includes("-");
+		for (let i = 0; i + 1 < lines.length; i++) {
+			if (lines[i].includes("|") && isDelim(lines[i + 1])) starts.push(i);
+		}
+		return starts;
+	}
+
 	/**
-	 * Replace the [status] marker inside the colIndex-th cell of a Markdown
-	 * table row. Returns the rewritten line, or null if the cell or marker
-	 * wasn't found.
+	 * Replace the [status] marker inside the colIndex-th cell of a table row.
+	 * Returns the rewritten line, or null if the cell/marker wasn't found.
 	 */
 	private rewriteCellStatus(
 		line: string,
@@ -179,14 +197,12 @@ export default class TableOfTasksPlugin extends Plugin {
 		newChar: string
 	): string | null {
 		const parts = line.split("|");
-		// With leading/trailing pipes, parts looks like ["", " a ", " b ", ""].
 		const hasLeading = parts.length > 0 && parts[0].trim() === "";
 		const target = (hasLeading ? 1 : 0) + colIndex;
 		if (target < 0 || target >= parts.length) return null;
-
 		const field = parts[target];
 		const replaced = field.replace(/\[.\]/, `[${newChar}]`);
-		if (replaced === field) return null; // no [status] marker in this cell
+		if (replaced === field) return null;
 		parts[target] = replaced;
 		return parts.join("|");
 	}

@@ -2,38 +2,42 @@
 
 .tot-task {
 	display: inline-flex;
-	align-items: baseline;
-	gap: 0.4em;
+	align-items: center;
+	gap: 0.5em;
 }
 
-.tot-task .tot-checkbox {
-	margin: 0;
+/* A checkbox-like box that can also show a status character inside it. */
+.tot-box {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 1.15em;
+	height: 1.15em;
+	border: 1px solid var(--checkbox-border-color, var(--background-modifier-border));
+	border-radius: 3px;
+	background: var(--background-primary);
+	color: var(--text-muted);
+	font-size: 0.8em;
+	font-weight: 600;
+	line-height: 1;
 	cursor: pointer;
-	align-self: center;
+	user-select: none;
 }
 
-.tot-task .tot-task-label {
-	cursor: default;
+.tot-box:hover {
+	border-color: var(--interactive-accent);
 }
 
-.tot-task.is-done .tot-task-label {
+/* Any chosen status highlights the box; to-do ([ ]) stays an empty outline. */
+.tot-box.is-filled {
+	background: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.tot-task.is-struck .tot-task-label {
 	text-decoration: line-through;
 	opacity: 0.6;
-}
-
-/*
- * Custom statuses ([/], [-], [>], [?], [!], ...) can't be shown by a native
- * checkbox (checked/unchecked only), so surface the raw status character as a
- * small badge. This is a theme-agnostic fallback; themes that style
- * [data-task="..."] on their own will layer on top.
- */
-.tot-task[data-task]:not([data-task=" "]):not([data-task="x"]):not([data-task="X"])::after {
-	content: attr(data-task);
-	align-self: center;
-	font-size: 0.7em;
-	line-height: 1;
-	padding: 0.05em 0.35em;
-	border-radius: 0.35em;
-	background: var(--background-modifier-hover);
-	color: var(--text-muted);
 }
