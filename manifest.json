@@ -3,7 +3,7 @@
 	"name": "Flexible Tasks",
 	"version": "0.9.0",
 	"minAppVersion": "1.4.0",
-	"description": "Interactive task checkboxes in Markdown table cells and lists, with custom statuses ([ ], [x], [/], [-], [>], [?], [!], and more) styled by your theme.",
+	"description": "Interactive task checkboxes in Markdown table cells and lists, with custom statuses such as done, in progress, cancelled, forwarded, and more, styled by your theme.",
 	"author": "KB Benton",
 	"authorUrl": "https://github.com/kbcmdba",
 	"isDesktopOnly": false

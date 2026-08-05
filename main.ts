@@ -333,27 +333,32 @@ export default class FlexibleTasksPlugin extends Plugin {
 		const tableIndex = domTables.indexOf(table);
 		if (tableIndex < 0) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split("\n");
-		const blocks = this.findTableBlocks(lines);
-		if (tableIndex >= blocks.length) {
-			new Notice("Flexible Tasks: couldn't map the table to the source.");
-			return;
+		// vault.process is an atomic read-modify-write (no read/modify race).
+		let changed = false;
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split("\n");
+			const blocks = this.findTableBlocks(lines);
+			if (tableIndex >= blocks.length) {
+				new Notice("Flexible Tasks: couldn't map the table to the source.");
+				return content;
+			}
+			const srcLineNo = blocks[tableIndex] + (rowIndex === 0 ? 0 : rowIndex + 1);
+			if (srcLineNo < 0 || srcLineNo >= lines.length) return content;
+
+			const rewritten = this.rewriteCellStatus(lines[srcLineNo], colIndex, newChar);
+			if (rewritten === null || rewritten === lines[srcLineNo]) return content;
+			lines[srcLineNo] = rewritten;
+			changed = true;
+			return lines.join("\n");
+		});
+
+		// Repaint optimistically on success; Obsidian also re-renders off the new
+		// source (which re-runs decorateCell), so this just avoids any flash.
+		if (changed) {
+			wrap.dataset.task = newChar;
+			wrap.toggleClass("is-struck", isStruck(newChar));
+			this.paintCheckbox(input, newChar);
 		}
-		const srcLineNo = blocks[tableIndex] + (rowIndex === 0 ? 0 : rowIndex + 1);
-		if (srcLineNo < 0 || srcLineNo >= lines.length) return;
-
-		const rewritten = this.rewriteCellStatus(lines[srcLineNo], colIndex, newChar);
-		if (rewritten === null || rewritten === lines[srcLineNo]) return;
-
-		// Optimistic repaint so there's no flash before Obsidian re-renders the
-		// preview off the modified source (which re-runs decorateCell anyway).
-		wrap.dataset.task = newChar;
-		wrap.toggleClass("is-struck", isStruck(newChar));
-		this.paintCheckbox(input, newChar);
-
-		lines[srcLineNo] = rewritten;
-		await this.app.vault.modify(file, lines.join("\n"));
 	}
 
 	/**
@@ -375,37 +380,38 @@ export default class FlexibleTasksPlugin extends Plugin {
 		const index = domTasks.indexOf(li);
 		if (index < 0) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split("\n");
-		let seen = -1;
-		let target = -1;
-		for (let i = 0; i < lines.length; i++) {
-			if (TASK_LINE_RE.test(lines[i])) {
-				seen++;
-				if (seen === index) {
-					target = i;
-					break;
+		// vault.process is an atomic read-modify-write (no read/modify race).
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split("\n");
+			let seen = -1;
+			let target = -1;
+			for (let i = 0; i < lines.length; i++) {
+				if (TASK_LINE_RE.test(lines[i])) {
+					seen++;
+					if (seen === index) {
+						target = i;
+						break;
+					}
 				}
 			}
-		}
-		dlog("writeBlock", {
-			index,
-			domCount: domTasks.length,
-			target,
-			targetLine: target >= 0 ? lines[target] : "(none)",
-			newChar,
+			dlog("writeBlock", {
+				index,
+				domCount: domTasks.length,
+				target,
+				targetLine: target >= 0 ? lines[target] : "(none)",
+				newChar,
+			});
+			if (target < 0) {
+				new Notice("Flexible Tasks: couldn't map the task to the source.");
+				return content;
+			}
+			const rewritten = lines[target].replace(/\[.\]/, `[${newChar}]`);
+			if (rewritten === lines[target]) return content;
+			// Rendering is the theme's job now; Obsidian re-renders off the new
+			// source, so we don't repaint anything ourselves.
+			lines[target] = rewritten;
+			return lines.join("\n");
 		});
-		if (target < 0) {
-			new Notice("Flexible Tasks: couldn't map the task to the source.");
-			return;
-		}
-		const rewritten = lines[target].replace(/\[.\]/, `[${newChar}]`);
-		if (rewritten === lines[target]) return;
-
-		// Rendering is the theme's job now; Obsidian re-renders on modify, so we
-		// don't repaint anything ourselves.
-		lines[target] = rewritten;
-		await this.app.vault.modify(file, lines.join("\n"));
 	}
 
 	/** Return the starting line index (header row) of each Markdown table block. */
