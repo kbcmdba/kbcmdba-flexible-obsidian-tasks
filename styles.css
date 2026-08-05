@@ -1,4 +1,4 @@
-/* Table of Tasks - styling for task checkboxes rendered inside table cells. */
+/* Table of Tasks - status boxes for task checkboxes in tables and lists. */
 
 .tot-task {
 	display: inline-flex;
@@ -37,7 +37,15 @@
 	color: var(--text-on-accent);
 }
 
-.tot-task.is-struck .tot-task-label {
+/* Block-list task: place the box where the native checkbox sat. */
+.tot-block-box {
+	margin-right: 0.35em;
+	vertical-align: middle;
+}
+
+/* Strikethrough for finished/abandoned statuses (table and block labels). */
+.tot-task.is-struck .tot-task-label,
+.tot-task-label.is-struck {
 	text-decoration: line-through;
 	opacity: 0.6;
 }
