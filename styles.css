@@ -49,3 +49,27 @@
 	text-decoration: line-through;
 	opacity: 0.6;
 }
+
+/* Live Preview box: replaces the [status] marker inline in the editor. */
+.tot-lp-box {
+	margin-right: 0.35em;
+	vertical-align: text-bottom;
+}
+
+/* Strike the label text of a finished/abandoned task in Live Preview. */
+.tot-lp-struck {
+	text-decoration: line-through;
+	opacity: 0.6;
+}
+
+/*
+ * Hide Obsidian's native Live Preview checkbox when we're rendering our own
+ * boxes (body class toggled by the "Style block-list tasks too" setting). Our
+ * replace decoration wins for space/x, but the native checkbox leaks through
+ * for custom statuses; this suppresses it uniformly.
+ */
+body.tot-hide-native-checkbox
+	.markdown-source-view.mod-cm6
+	input.task-list-item-checkbox {
+	display: none;
+}
