@@ -46,6 +46,16 @@ const isDone = (c: string): boolean => c === "x" || c === "X";
 const STRIKETHROUGH = new Set(["x", "X", "-", ">"]);
 const isStruck = (c: string): boolean => STRIKETHROUGH.has(c);
 
+/** The statuses the plugin plans for (its menu) plus uppercase done. */
+const PLANNED = new Set([...MENU_STATUSES.map((s) => s.char), "X"]);
+/**
+ * The value the THEME should render for a status. Planned statuses pass through
+ * so the theme draws their icon; an "unplanned"/off-book character is surfaced
+ * with the Important indicator so it stands out instead of silently looking done.
+ * The source file always keeps the real character - this only affects data-task.
+ */
+const themeTask = (c: string): string => (PLANNED.has(c) ? c : "!");
+
 /** Flip to enable verbose console diagnostics during development. */
 const DEBUG = true;
 const dlog = (...args: unknown[]): void => {
@@ -177,20 +187,31 @@ export default class TableOfTasksPlugin extends Plugin {
 		wrap.dataset.task = status;
 		if (isStruck(status)) wrap.addClass("is-struck");
 
-		const box = wrap.createSpan({ cls: "tot-box" });
-		this.paintBox(box, status);
+		// Defer rendering to the theme: emit a real task-list checkbox carrying the
+		// status char in data-task, rather than drawing our own box. Minimal (and
+		// other checkbox themes) style `input[data-task="X"]:checked` standalone -
+		// no `li.task-list-item` ancestry required - so a bare input in a <td> picks
+		// up the theme's status icon for free. GFM won't make one here (cells are
+		// inline-only), which is the whole reason this plugin exists.
+		const input = wrap.createEl("input", {
+			cls: "task-list-item-checkbox",
+			attr: { type: "checkbox" },
+		});
+		this.paintCheckbox(input, status);
 
 		wrap.createSpan({ cls: "tot-task-label", text: label });
 
-		box.addEventListener("click", async (evt) => {
+		// Interaction reads the REAL char from wrap.dataset.task; input.dataset.task
+		// may be theme-mapped (e.g. an unplanned char shows as Important).
+		input.addEventListener("click", async (evt) => {
 			evt.preventDefault();
 			const current = wrap.dataset.task ?? " ";
 			const next = isDone(current) ? " " : "x";
-			await this.writeCellStatus(view, table, cell, next, wrap, box);
+			await this.writeCellStatus(view, table, cell, next, wrap, input);
 		});
-		box.addEventListener("contextmenu", (evt) =>
+		input.addEventListener("contextmenu", (evt) =>
 			this.showStatusMenu(evt, wrap.dataset.task ?? " ", (char) =>
-				this.writeCellStatus(view, table, cell, char, wrap, box)
+				this.writeCellStatus(view, table, cell, char, wrap, input)
 			)
 		);
 	}
@@ -204,6 +225,17 @@ export default class TableOfTasksPlugin extends Plugin {
 		);
 		if (!input) return;
 		li.addClass("tot-wired");
+
+		// Surface an unplanned/off-book status via the Important indicator instead of
+		// letting it fall through to the theme's plain "checked" look (which reads as
+		// done). Display only - Obsidian's native toggle writes from the source line,
+		// not this attribute, so the real character is untouched.
+		const raw = li.getAttribute("data-task") || " ";
+		const mapped = themeTask(raw);
+		if (mapped !== raw) {
+			li.setAttribute("data-task", mapped);
+			input.setAttribute("data-task", mapped);
+		}
 
 		// Defer rendering to the theme: keep Obsidian's native (themed) checkbox and
 		// its native left-click toggle, and only add a right-click status menu for
@@ -226,6 +258,18 @@ export default class TableOfTasksPlugin extends Plugin {
 		box.dataset.task = status;
 		box.toggleClass("is-filled", status !== " ");
 		box.setText(status === " " ? "" : isDone(status) ? "✓" : status);
+	}
+
+	/**
+	 * Set a native checkbox to reflect a status so the THEME renders the icon.
+	 * To-do is unchecked with no data-task; every other status is checked and
+	 * carries data-task="<char>" (what theme selectors key off).
+	 */
+	paintCheckbox(input: HTMLInputElement, status: string) {
+		const todo = status === " ";
+		input.checked = !todo;
+		if (todo) delete input.dataset.task;
+		else input.dataset.task = themeTask(status);
 	}
 
 	showStatusMenu(
@@ -313,7 +357,7 @@ export default class TableOfTasksPlugin extends Plugin {
 		cell: HTMLTableCellElement,
 		newChar: string,
 		wrap: HTMLElement,
-		box: HTMLElement
+		input: HTMLInputElement
 	) {
 		const file = view.file;
 		if (!(file instanceof TFile)) return;
@@ -340,9 +384,11 @@ export default class TableOfTasksPlugin extends Plugin {
 		const rewritten = this.rewriteCellStatus(lines[srcLineNo], colIndex, newChar);
 		if (rewritten === null || rewritten === lines[srcLineNo]) return;
 
+		// Optimistic repaint so there's no flash before Obsidian re-renders the
+		// preview off the modified source (which re-runs decorateCell anyway).
 		wrap.dataset.task = newChar;
 		wrap.toggleClass("is-struck", isStruck(newChar));
-		this.paintBox(box, newChar);
+		this.paintCheckbox(input, newChar);
 
 		lines[srcLineNo] = rewritten;
 		await this.app.vault.modify(file, lines.join("\n"));
