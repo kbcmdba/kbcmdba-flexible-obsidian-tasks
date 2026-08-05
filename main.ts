@@ -10,24 +10,12 @@ import {
 	Notice,
 	TFile,
 	MarkdownView,
-	editorLivePreviewField,
 } from "obsidian";
-import { Prec, RangeSetBuilder } from "@codemirror/state";
-import {
-	Decoration,
-	DecorationSet,
-	EditorView,
-	ViewPlugin,
-	ViewUpdate,
-	WidgetType,
-} from "@codemirror/view";
 
 /** A table cell whose text is a task: list marker, [status] box, optional label. */
 const TASK_CELL_RE = /^\s*[-*+]\s+\[(.)\]\s*(.*)$/;
 /** A block-list task line in the source (any indentation). */
 const TASK_LINE_RE = /^\s*[-*+]\s+\[.\]/;
-/** A block-list task at the start of a line, capturing the marker prefix and status. */
-const TASK_PREFIX_RE = /^(\s*[-*+]\s+)\[(.)\]/;
 
 /** Statuses offered in the right-click menu. Rendering supports any character. */
 const MENU_STATUSES: ReadonlyArray<{ char: string; label: string }> = [
@@ -97,29 +85,11 @@ export default class TableOfTasksPlugin extends Plugin {
 		);
 		this.app.workspace.onLayoutReady(() => this.queueScan());
 
-		// Live Preview: reading-view DOM injection doesn't work there (CM6 owns and
-		// rebuilds the editor DOM), so we render the boxes with a CodeMirror editor
-		// extension instead. Prec.highest so our replace decoration wins over
-		// Obsidian's own Live Preview checkbox over the same [status] marker.
-		this.registerEditorExtension(Prec.highest(livePreviewBoxes(this)));
-
-		// Prec.highest suppresses Obsidian's native LP checkbox only for statuses it
-		// renders the same way (space/x); for custom statuses (/, ?, ...) its
-		// checkbox still leaks through. We're replacing it with our own box anyway,
-		// so hide the native one via a body class while block styling is on.
-		this.updateNativeCheckboxHiding();
-	}
-
-	onunload() {
-		document.body.removeClass("tot-hide-native-checkbox");
-	}
-
-	/** Toggle the body class that hides Obsidian's native Live Preview checkbox. */
-	private updateNativeCheckboxHiding() {
-		document.body.toggleClass(
-			"tot-hide-native-checkbox",
-			this.settings.styleBlockTasks
-		);
+		// Live Preview block tasks defer to the theme: Obsidian renders its own
+		// native checkbox and stamps data-task on the .HyperMD-task-line, which the
+		// checkbox theme styles. We inject nothing into the editor - setting a custom
+		// status there goes through the "Checkbox choices" submenu on the editor
+		// context menu (registered above).
 	}
 
 	async loadSettings() {
@@ -128,7 +98,6 @@ export default class TableOfTasksPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-		this.updateNativeCheckboxHiding();
 		this.queueScan();
 	}
 
@@ -252,13 +221,6 @@ export default class TableOfTasksPlugin extends Plugin {
 	}
 
 	// --- Shared helpers ----------------------------------------------------
-
-	/** Paint a status box: empty for to-do, a check for done, else the raw char. */
-	paintBox(box: HTMLElement, status: string) {
-		box.dataset.task = status;
-		box.toggleClass("is-filled", status !== " ");
-		box.setText(status === " " ? "" : isDone(status) ? "✓" : status);
-	}
 
 	/**
 	 * Set a native checkbox to reflect a status so the THEME renders the icon.
@@ -471,121 +433,6 @@ export default class TableOfTasksPlugin extends Plugin {
 		parts[target] = replaced;
 		return parts.join("|");
 	}
-}
-
-// --- Live Preview (CodeMirror 6) -------------------------------------------
-
-/** A status box rendered in the Live Preview editor in place of a [status] marker. */
-class StatusBoxWidget extends WidgetType {
-	constructor(
-		private status: string,
-		private markerStart: number,
-		private plugin: TableOfTasksPlugin
-	) {
-		super();
-	}
-
-	eq(other: StatusBoxWidget): boolean {
-		return other.status === this.status && other.markerStart === this.markerStart;
-	}
-
-	toDOM(view: EditorView): HTMLElement {
-		const box = createSpan({ cls: "tot-box tot-lp-box" });
-		this.plugin.paintBox(box, this.status);
-		box.addEventListener("mousedown", (evt) => evt.preventDefault());
-		box.addEventListener("click", (evt) => {
-			evt.preventDefault();
-			this.setStatus(view, isDone(this.status) ? " " : "x");
-		});
-		box.addEventListener("contextmenu", (evt) =>
-			this.plugin.showStatusMenu(evt, this.status, (char) =>
-				this.setStatus(view, char)
-			)
-		);
-		return box;
-	}
-
-	/** Rewrite the 3-char [status] marker via an editor transaction. */
-	private setStatus(view: EditorView, char: string) {
-		view.dispatch({
-			changes: {
-				from: this.markerStart,
-				to: this.markerStart + 3,
-				insert: `[${char}]`,
-			},
-		});
-	}
-
-	/** Let the widget handle its own click/contextmenu instead of the editor. */
-	ignoreEvent(): boolean {
-		return true;
-	}
-}
-
-/**
- * A CodeMirror ViewPlugin that swaps each block-list task's [status] marker for
- * our status box while in Live Preview. The line under the cursor/selection is
- * left as raw text so it stays editable (matching Obsidian's own behaviour).
- */
-function livePreviewBoxes(plugin: TableOfTasksPlugin) {
-	return ViewPlugin.fromClass(
-		class {
-			decorations: DecorationSet;
-
-			constructor(view: EditorView) {
-				this.decorations = this.build(view);
-			}
-
-			update(u: ViewUpdate) {
-				if (u.docChanged || u.viewportChanged || u.selectionSet) {
-					this.decorations = this.build(u.view);
-				}
-			}
-
-			build(view: EditorView): DecorationSet {
-				const builder = new RangeSetBuilder<Decoration>();
-				// Only in Live Preview (not source mode), and only if enabled.
-				if (!view.state.field(editorLivePreviewField)) return builder.finish();
-				if (!plugin.settings.styleBlockTasks) return builder.finish();
-
-				const doc = view.state.doc;
-				const sel = view.state.selection.main;
-				for (const { from, to } of view.visibleRanges) {
-					let line = doc.lineAt(from);
-					while (line.from <= to) {
-						const m = TASK_PREFIX_RE.exec(line.text);
-						if (m) {
-							// Leave the line the cursor/selection touches as raw text.
-							const active = sel.from <= line.to && sel.to >= line.from;
-							if (!active) {
-								const status = m[2];
-								const markerStart = line.from + m[1].length;
-								builder.add(
-									markerStart,
-									markerStart + 3,
-									Decoration.replace({
-										widget: new StatusBoxWidget(status, markerStart, plugin),
-									})
-								);
-								// Strike the label text for finished/abandoned statuses.
-								if (isStruck(status) && markerStart + 3 < line.to) {
-									builder.add(
-										markerStart + 3,
-										line.to,
-										Decoration.mark({ class: "tot-lp-struck" })
-									);
-								}
-							}
-						}
-						if (line.to + 1 > doc.length) break;
-						line = doc.lineAt(line.to + 1);
-					}
-				}
-				return builder.finish();
-			}
-		},
-		{ decorations: (v) => v.decorations }
-	);
 }
 
 class TableOfTasksSettingTab extends PluginSettingTab {

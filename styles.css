@@ -1,4 +1,4 @@
-/* Table of Tasks - status boxes for task checkboxes in tables and lists. */
+/* Table of Tasks - task checkboxes in table cells and block lists. */
 
 .tot-task {
 	display: inline-flex;
@@ -6,70 +6,12 @@
 	gap: 0.5em;
 }
 
-/* A checkbox-like box that can also show a status character inside it. */
-.tot-box {
-	flex: 0 0 auto;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	box-sizing: border-box;
-	width: 1.15em;
-	height: 1.15em;
-	border: 1px solid var(--checkbox-border-color, var(--background-modifier-border));
-	border-radius: 3px;
-	background: var(--background-primary);
-	color: var(--text-muted);
-	font-size: 0.8em;
-	font-weight: 600;
-	line-height: 1;
-	cursor: pointer;
-	user-select: none;
-}
-
-.tot-box:hover {
-	border-color: var(--interactive-accent);
-}
-
-/* Any chosen status highlights the box; to-do ([ ]) stays an empty outline. */
-.tot-box.is-filled {
-	background: var(--interactive-accent);
-	border-color: var(--interactive-accent);
-	color: var(--text-on-accent);
-}
-
-/* Block-list task: place the box where the native checkbox sat. */
-.tot-block-box {
-	margin-right: 0.35em;
-	vertical-align: middle;
-}
-
-/* Strikethrough for finished/abandoned statuses (table and block labels). */
+/*
+ * Strikethrough for finished/abandoned statuses. Applies to our synthesized
+ * table-cell labels; block-list tasks are struck by the theme (native task DOM).
+ */
 .tot-task.is-struck .tot-task-label,
 .tot-task-label.is-struck {
 	text-decoration: line-through;
 	opacity: 0.6;
-}
-
-/* Live Preview box: replaces the [status] marker inline in the editor. */
-.tot-lp-box {
-	margin-right: 0.35em;
-	vertical-align: text-bottom;
-}
-
-/* Strike the label text of a finished/abandoned task in Live Preview. */
-.tot-lp-struck {
-	text-decoration: line-through;
-	opacity: 0.6;
-}
-
-/*
- * Hide Obsidian's native Live Preview checkbox when we're rendering our own
- * boxes (body class toggled by the "Style block-list tasks too" setting). Our
- * replace decoration wins for space/x, but the native checkbox leaks through
- * for custom statuses; this suppresses it uniformly.
- */
-body.tot-hide-native-checkbox
-	.markdown-source-view.mod-cm6
-	input.task-list-item-checkbox {
-	display: none;
 }
