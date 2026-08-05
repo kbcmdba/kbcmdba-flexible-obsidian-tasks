@@ -46,6 +46,12 @@ const isDone = (c: string): boolean => c === "x" || c === "X";
 const STRIKETHROUGH = new Set(["x", "X", "-", ">"]);
 const isStruck = (c: string): boolean => STRIKETHROUGH.has(c);
 
+/** Flip to enable verbose console diagnostics during development. */
+const DEBUG = true;
+const dlog = (...args: unknown[]): void => {
+	if (DEBUG) console.log("[FT]", ...args);
+};
+
 interface TableOfTasksSettings {
 	styleBlockTasks: boolean;
 }
@@ -192,45 +198,24 @@ export default class TableOfTasksPlugin extends Plugin {
 	// --- Block-list tasks --------------------------------------------------
 
 	private decorateListItem(li: HTMLLIElement, view: MarkdownView) {
-		if (li.hasClass("tot-decorated")) return;
+		if (li.hasClass("tot-wired")) return;
 		const input = li.querySelector<HTMLInputElement>(
 			":scope > input.task-list-item-checkbox"
 		);
 		if (!input) return;
-		const raw = li.getAttribute("data-task");
-		const status = raw && raw.length ? raw : " ";
-		li.addClass("tot-decorated");
+		li.addClass("tot-wired");
 
-		// Replace the native checkbox with our status box, preserving everything
-		// else in the item (including any nested sub-tasks).
-		const box = createSpan({ cls: "tot-box tot-block-box" });
-		input.replaceWith(box);
-		this.paintBox(box, status);
-
-		// Wrap the item's own label text (not nested sub-lists) so we can strike
-		// just this task without striking its children.
-		const label = createSpan({ cls: "tot-task-label tot-block-label" });
-		const move: ChildNode[] = [];
-		li.childNodes.forEach((n) => {
-			if (n === box) return;
-			if (n instanceof HTMLElement && (n.tagName === "UL" || n.tagName === "OL"))
-				return;
-			move.push(n);
-		});
-		move.forEach((n) => label.appendChild(n));
-		box.after(label);
-		if (isStruck(status)) label.addClass("is-struck");
-
-		box.addEventListener("click", async (evt) => {
-			evt.preventDefault();
-			const current = box.dataset.task ?? " ";
-			const next = isDone(current) ? " " : "x";
-			await this.writeBlockStatus(view, li, next, box, label);
-		});
-		box.addEventListener("contextmenu", (evt) =>
-			this.showStatusMenu(evt, box.dataset.task ?? " ", (char) =>
-				this.writeBlockStatus(view, li, char, box, label)
-			)
+		// Defer rendering to the theme: keep Obsidian's native (themed) checkbox and
+		// its native left-click toggle, and only add a right-click status menu for
+		// custom statuses. We used to replace the checkbox with our own box, but on
+		// foldable parent items the collapse affordance overlays that box and
+		// swallows every pointer event, so parent tasks couldn't be clicked or
+		// right-clicked at all. The native checkbox has no such problem.
+		input.addEventListener("contextmenu", (evt) =>
+			this.showStatusMenu(evt, li.getAttribute("data-task") || " ", (char) => {
+				dlog("block right-click", { status: li.getAttribute("data-task"), char });
+				this.writeBlockStatus(view, li, char);
+			})
 		);
 	}
 
@@ -371,9 +356,7 @@ export default class TableOfTasksPlugin extends Plugin {
 	private async writeBlockStatus(
 		view: MarkdownView,
 		li: HTMLLIElement,
-		newChar: string,
-		box: HTMLElement,
-		label: HTMLElement
+		newChar: string
 	) {
 		const file = view.file;
 		if (!(file instanceof TFile)) return;
@@ -397,6 +380,13 @@ export default class TableOfTasksPlugin extends Plugin {
 				}
 			}
 		}
+		dlog("writeBlock", {
+			index,
+			domCount: domTasks.length,
+			target,
+			targetLine: target >= 0 ? lines[target] : "(none)",
+			newChar,
+		});
 		if (target < 0) {
 			new Notice("Table of Tasks: couldn't map the task to the source.");
 			return;
@@ -404,10 +394,8 @@ export default class TableOfTasksPlugin extends Plugin {
 		const rewritten = lines[target].replace(/\[.\]/, `[${newChar}]`);
 		if (rewritten === lines[target]) return;
 
-		box.dataset.task = newChar;
-		this.paintBox(box, newChar);
-		label.toggleClass("is-struck", isStruck(newChar));
-
+		// Rendering is the theme's job now; Obsidian re-renders on modify, so we
+		// don't repaint anything ourselves.
 		lines[target] = rewritten;
 		await this.app.vault.modify(file, lines.join("\n"));
 	}
