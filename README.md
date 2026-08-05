@@ -36,7 +36,11 @@ In reading view each `- [ ]` becomes a clickable checkbox. Left-click completes 
 
 - **Left-click** toggles between done (`[x]`) and to-do (`[ ]`) - the same as checkboxes everywhere else in Obsidian.
 - **Right-click** opens a menu to set any status directly.
-- Custom statuses render with a small badge and set `data-task="<char>"`, so themes that style `[data-task]` apply on top.
+- Rendering is deferred to your theme: the plugin puts real checkboxes carrying `data-task="<char>"` in place, and your checkbox theme draws the status icon.
+
+## Themes
+
+Status icons are drawn by your **checkbox theme**, not by the plugin. It works best with the [Minimal](https://minimal.guide/) theme, which this plugin is developed against; using other themes may yield different results. A status character the plugin doesn't plan for is shown with the **Important** indicator so it stands out rather than looking done.
 
 ## Development
 
