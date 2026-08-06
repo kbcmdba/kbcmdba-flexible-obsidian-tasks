@@ -3,6 +3,8 @@
 
 Thanks for your interest in improving Flexible Tasks. Bug reports, ideas, and pull requests are all welcome.
 
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md); by participating you agree to uphold it.
+
 ## Reporting bugs and requesting features
 
 Open an issue on GitHub: <https://github.com/kbcmdba/kbcmdba-flexible-obsidian-tasks/issues>.
