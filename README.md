@@ -37,6 +37,8 @@ Each `- [ ]` becomes a clickable checkbox.
 
 Every status beyond a plain done/to-do toggle lives on the **right-click** — on both surfaces, so nothing is hidden behind a hotkey or command palette entry:
 
+![The right-click status menu, listing To do, Done, In progress, Cancelled, Forwarded, Question, and Important, with the current status checked](docs/status-menu.png)
+
 - **Reading view** — **left-click** a checkbox to toggle done ↔ to-do; **right-click** it to open the status menu and choose any status (`[ ]`, `[x]`, `[/]`, `[-]`, `[>]`, `[?]`, `[!]`).
 - **Editor (Live Preview / source)** — **right-click** anywhere on a task line and choose **Checkbox choices**, then pick a status.
 
