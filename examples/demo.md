@@ -10,8 +10,17 @@ GitHub, as you can see if you view the raw source) never turn it into a checkbox
 A little project board where every cell is a real, clickable checkbox (the icons
 are drawn by your theme - shown here with Minimal):
 
-<!-- When docs/board.png exists, replace the approximation table below with the real screenshot:
-     ![Flexible Tasks board in Obsidian](../docs/board.png) -->
+<!--
+  Why Unicode glyphs instead of real checkboxes in this table:
+  GitHub cannot render task checkboxes inside table cells. GFM treats a cell as
+  inline-only (so `- [ ]` is literal text), and GitHub's HTML sanitizer strips
+  author-written <input> elements - verified against the GitHub /markdown API:
+  only a checkbox GitHub itself generates from `- [ ]` in LIST context survives,
+  never one in a cell or a hand-written <input>. So this board uses static glyphs
+  as a stand-in. Best upgrade is a real screenshot: once docs/board.png exists,
+  replace the table below with
+      ![Flexible Tasks board in Obsidian](../docs/board.png)
+-->
 
 | Today       | This Week       | Someday          |
 | :---------- | :-------------- | :--------------- |
