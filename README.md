@@ -64,6 +64,10 @@ ln -s "$(pwd)" /path/to/TestVault/.obsidian/plugins/flexible-tasks
 
 Then enable **Flexible Tasks** in the vault's community-plugin settings and use "Reload app without saving" (or the Hot-Reload plugin) after each build.
 
+## Contributing
+
+Bug reports, ideas, and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop, the UAT plan, and the defer-to-theme architecture to keep in mind.
+
 ## License
 
 GPL-2.0-only. See [LICENSE](LICENSE).
