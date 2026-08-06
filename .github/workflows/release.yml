@@ -1,0 +1,52 @@
+name: Release plugin
+
+# Cut a release by pushing a version tag matching manifest.json (no leading "v"),
+# e.g. `git tag 0.9.2 && git push origin 0.9.2`. CI builds the plugin, attaches
+# build-provenance attestations to the artifacts, and publishes the GitHub
+# release with main.js / manifest.json / styles.css. Building in CI is what lets
+# users cryptographically verify the assets were built from this source.
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write # create the release
+  id-token: write # OIDC token for attestation
+  attestations: write # write build-provenance attestations
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
+
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" main.js manifest.json styles.css \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes "Automated release for $TAG. Assets are built in CI with build-provenance attestations."

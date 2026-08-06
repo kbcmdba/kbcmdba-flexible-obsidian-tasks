@@ -10,6 +10,7 @@ import {
 	Notice,
 	TFile,
 	MarkdownView,
+	type SettingDefinitionItem,
 } from "obsidian";
 
 /** A table cell whose text is a task: list marker, [status] box, optional label. */
@@ -436,13 +437,42 @@ class FlexibleTasksSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	// Declarative settings (Obsidian 1.13+): the settings show up in Obsidian's
+	// settings search. On older versions this is ignored and display() runs.
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return [
+			{
+				name: "Style block-list tasks too",
+				desc: "Also add the right-click status menu to ordinary (non-table) list tasks in Reading view.",
+				control: {
+					type: "toggle",
+					key: "styleBlockTasks",
+					defaultValue: DEFAULT_SETTINGS.styleBlockTasks,
+				},
+			},
+		];
+	}
+
+	getControlValue(key: string): unknown {
+		if (key === "styleBlockTasks") return this.plugin.settings.styleBlockTasks;
+		return undefined;
+	}
+
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		if (key === "styleBlockTasks") {
+			this.plugin.settings.styleBlockTasks = Boolean(value);
+			await this.plugin.saveSettings();
+		}
+	}
+
+	// Fallback for Obsidian < 1.13, where the declarative API above is unavailable.
 	display() {
 		const { containerEl } = this;
 		containerEl.empty();
 		new Setting(containerEl)
 			.setName("Style block-list tasks too")
 			.setDesc(
-				"Apply the same status boxes to normal task lists outside tables, not just inside them. Turn off to leave block tasks to your theme."
+				"Also add the right-click status menu to ordinary (non-table) list tasks in Reading view."
 			)
 			.addToggle((toggle) =>
 				toggle
