@@ -7,30 +7,15 @@ GitHub, as you can see if you view the raw source) never turn it into a checkbox
 
 ## What it looks like in Obsidian
 
-A little project board where every cell is a real, clickable checkbox (the icons
-are drawn by your theme - shown here with Minimal):
+Here's a project board where every table cell is a real, clickable checkbox, with
+an ordinary list below it - all rendered with the [Minimal](https://minimal.guide/)
+theme:
 
-<!--
-  Why Unicode glyphs instead of real checkboxes in this table:
-  GitHub cannot render task checkboxes inside table cells. GFM treats a cell as
-  inline-only (so `- [ ]` is literal text), and GitHub's HTML sanitizer strips
-  author-written <input> elements - verified against the GitHub /markdown API:
-  only a checkbox GitHub itself generates from `- [ ]` in LIST context survives,
-  never one in a cell or a hand-written <input>. So this board uses static glyphs
-  as a stand-in. Best upgrade is a real screenshot: once docs/board.png exists,
-  replace the table below with
-      ![Flexible Tasks board in Obsidian](../docs/board.png)
--->
+![Flexible Tasks in Obsidian with the Minimal theme: interactive checkboxes inside table cells and in a plain list, showing to-do, done, in-progress, cancelled, forwarded, question, and important statuses](../docs/demo.png)
 
-| Today       | This Week       | Someday          |
-| :---------- | :-------------- | :--------------- |
-| ☐ One       | ◧ Draft PR      | ☐ Learn Rust     |
-| ☑ ~~Two~~   | ☐ Review        | ☒ ~~Old idea~~   |
-| ◧ Three     | ➤ ~~Deferred~~  | ❓ Maybe         |
-
-> The glyphs above are a static stand-in so this page renders on GitHub. In
-> Obsidian these are live checkboxes styled by your theme - **left-click**
-> toggles done/to-do, **right-click** sets any status.
+**Left-click** a checkbox to toggle done/to-do; **right-click** to set any status.
+The status icons are drawn by your checkbox theme (shown here with Minimal) - a
+different theme will render them differently.
 
 ## What you write
 
@@ -50,15 +35,15 @@ your changes back to the file. The status character round-trips faithfully - a
 
 ## Statuses
 
-| Marker | Meaning     | Shown above |
-| :----- | :---------- | :---------- |
-| `[ ]`  | To do       | ☐           |
-| `[x]`  | Done        | ☑           |
-| `[/]`  | In progress | ◧           |
-| `[-]`  | Cancelled   | ☒           |
-| `[>]`  | Forwarded   | ➤           |
-| `[?]`  | Question    | ❓          |
-| `[!]`  | Important   | ❗          |
+| Marker | Meaning     |
+| :----- | :---------- |
+| `[ ]`  | To do       |
+| `[x]`  | Done        |
+| `[/]`  | In progress |
+| `[-]`  | Cancelled   |
+| `[>]`  | Forwarded   |
+| `[?]`  | Question    |
+| `[!]`  | Important   |
 
 Any other single character works too, and shows with the **Important** indicator
 so an unplanned status stands out instead of quietly looking done.
