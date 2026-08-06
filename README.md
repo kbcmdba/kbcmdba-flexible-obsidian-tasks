@@ -2,6 +2,8 @@
 
 An [Obsidian](https://obsidian.md) plugin for interactive task checkboxes **inside Markdown table cells** — and custom task statuses everywhere, rendered by your theme.
 
+![Flexible Tasks in Obsidian with the Minimal theme: interactive checkboxes inside table cells and in an ordinary list, showing to-do, done, in-progress, cancelled, forwarded, question, and important statuses](docs/demo.png)
+
 ## Why
 
 A Markdown table cell is inline-only, so a task like `- [ ] One` written in a cell renders as dead text: Obsidian never turns it into a checkbox, and task plugins skip it. Flexible Tasks turns those cell tasks into real, interactive checkboxes and writes toggles back to the source file. It also adds a right-click status menu to ordinary block-list tasks, so you can set any status without retyping the marker.
