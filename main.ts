@@ -44,12 +44,6 @@ const PLANNED = new Set([...MENU_STATUSES.map((s) => s.char), "X"]);
  */
 const themeTask = (c: string): string => (PLANNED.has(c) ? c : "!");
 
-/** Flip to enable verbose console diagnostics during development. */
-const DEBUG = false;
-const dlog = (...args: unknown[]): void => {
-	if (DEBUG) console.log("[FT]", ...args);
-};
-
 interface FlexibleTasksSettings {
 	styleBlockTasks: boolean;
 }
@@ -93,7 +87,8 @@ export default class FlexibleTasksPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const saved = (await this.loadData()) as Partial<FlexibleTasksSettings> | null;
+		this.settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
 	}
 
 	async saveSettings() {
@@ -172,16 +167,16 @@ export default class FlexibleTasksPlugin extends Plugin {
 
 		// Interaction reads the REAL char from wrap.dataset.task; input.dataset.task
 		// may be theme-mapped (e.g. an unplanned char shows as Important).
-		input.addEventListener("click", async (evt) => {
+		input.addEventListener("click", (evt) => {
 			evt.preventDefault();
 			const current = wrap.dataset.task ?? " ";
 			const next = isDone(current) ? " " : "x";
-			await this.writeCellStatus(view, table, cell, next, wrap, input);
+			void this.writeCellStatus(view, table, cell, next, wrap, input);
 		});
 		input.addEventListener("contextmenu", (evt) =>
-			this.showStatusMenu(evt, wrap.dataset.task ?? " ", (char) =>
-				this.writeCellStatus(view, table, cell, char, wrap, input)
-			)
+			this.showStatusMenu(evt, wrap.dataset.task ?? " ", (char) => {
+				void this.writeCellStatus(view, table, cell, char, wrap, input);
+			})
 		);
 	}
 
@@ -214,8 +209,7 @@ export default class FlexibleTasksPlugin extends Plugin {
 		// right-clicked at all. The native checkbox has no such problem.
 		input.addEventListener("contextmenu", (evt) =>
 			this.showStatusMenu(evt, li.getAttribute("data-task") || " ", (char) => {
-				dlog("block right-click", { status: li.getAttribute("data-task"), char });
-				this.writeBlockStatus(view, li, char);
+				void this.writeBlockStatus(view, li, char);
 			})
 		);
 	}
@@ -394,13 +388,6 @@ export default class FlexibleTasksPlugin extends Plugin {
 					}
 				}
 			}
-			dlog("writeBlock", {
-				index,
-				domCount: domTasks.length,
-				target,
-				targetLine: target >= 0 ? lines[target] : "(none)",
-				newChar,
-			});
 			if (target < 0) {
 				new Notice("Flexible Tasks: couldn't map the task to the source.");
 				return content;
