@@ -12,9 +12,9 @@ A Markdown table cell is inline-only, so a task like `- [ ] One` written in a ce
 
 - **Checkboxes in table cells** — the thing the Markdown format won't do. Click to toggle, right-click to set any status.
 - **Custom statuses** — `[ ]`, `[x]`, `[/]`, `[-]`, `[>]`, `[?]`, `[!]`, and any other single character round-trip faithfully in the source.
-- **Renders in both Reading view and Live Preview.**
-- **Defers to your theme.** The plugin puts a real checkbox carrying `data-task="<char>"` in place; your checkbox theme draws the status icon. Nothing is overridden.
-- **Off-book statuses stand out.** A character the plugin doesn't plan for is shown with the **Important** indicator instead of a plain check, so an unusual status never masquerades as done.
+- **Table checkboxes in Reading view.** Live Preview uses Obsidian's native table editor.
+- **Defers to your theme.** The plugin puts a real checkbox carrying `data-task="<char>"` in place. The theme draws the checkbox and status icon.
+- **Off-book statuses stand out.** Table checkboxes expose the original character on hover and request the theme's **Important** indicator when the character has no menu entry.
 
 ## Themes
 
@@ -49,7 +49,7 @@ Every status beyond a plain done/to-do toggle lives on the **right-click** — o
 ![The right-click status menu, listing To do, Done, In progress, Cancelled, Forwarded, Question, and Important, with the current status checked](docs/status-menu.png)
 
 - **Reading view** — **left-click** a checkbox to toggle done ↔ to-do; **right-click** it to open the status menu and choose any status (`[ ]`, `[x]`, `[/]`, `[-]`, `[>]`, `[?]`, `[!]`).
-- **Editor (Live Preview / source)** — **right-click** anywhere on a task line and choose **Checkbox choices**, then pick a status.
+- **Editor (Live Preview / source)** — **right-click** a task line or a Markdown table row and choose **Checkbox choices**. In a table row, the menu uses the task in the current cell when possible.
 
 In short: left-click is the quick done/to-do toggle; **right-click is how you reach the full status set.**
 
@@ -63,6 +63,7 @@ In short: left-click is the quick done/to-do toggle; **right-click is how you re
 npm install
 npm run dev     # watch build -> main.js
 npm run build   # type-check + production bundle
+npm test        # source-mapping regression tests
 ```
 
 For a live dev loop, symlink this folder into a test vault's plugin directory:

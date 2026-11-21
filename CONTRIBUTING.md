@@ -23,6 +23,7 @@ A good bug report includes:
 npm install
 npm run dev     # watch build -> main.js
 npm run build   # type-check + production bundle
+npm test        # source-mapping regression tests
 ```
 
 For a live dev loop, symlink this folder into a test vault's plugin directory, enable **Flexible Tasks** in that vault's community-plugin settings, then reload after each build with `Ctrl+P → "Reload app without saving"` (`Ctrl+R` is not bound), or use the Hot-Reload plugin:
@@ -35,14 +36,15 @@ The plugin is developed against the [Minimal](https://minimal.guide/) theme; ins
 
 ## Architecture notes
 
-Two things are worth knowing before you dig in:
-
 - **Reading view and Live Preview are separate rendering pipelines.** Reading view is post-processed HTML; Live Preview is a CodeMirror 6 editor that owns its DOM. A change often needs handling in both.
+- **Reading view uses the source position of each rendered section.** Checkbox actions validate that document revision in `Vault.process`. An open editor with unsaved changes can defer a Reading view action until the note updates.
 - **The plugin defers rendering to your theme.** It puts a real checkbox carrying `data-task="<char>"` in the DOM and gets out of the way — it does not draw its own box or glyph. Please keep new work aligned with that model rather than reintroducing custom-drawn checkboxes.
 
 ## Testing
 
 There is a manual UAT plan in [UAT.md](UAT.md) covering both pipelines, table cells, custom statuses, and write-back integrity. Before opening a PR that touches rendering or write-back, run the cases relevant to your change and note the results in the PR description.
+
+`npm run test:vault` prepares a new synthetic vault under the ignored `test-vault/` directory after a build. The [isolated dashboard regressions](UAT.md#7-isolated-dashboard-regressions) include a repeatable desktop smoke test.
 
 The hard rule from the exit criteria: **any write-back that corrupts a table row, drops a label, or writes to the wrong line is a release blocker.** Verify the raw `.md` on disk after your change, not just the rendered view.
 
