@@ -66,6 +66,7 @@ interface PendingWrites {
 }
 
 const STALE_SOURCE = new Error("Stale Markdown source");
+const MAX_RETAINED_REVISIONS = 8;
 
 function getMarker(line: string | undefined, target: Target): Marker | null {
 	if (line === undefined) return null;
@@ -330,8 +331,9 @@ export default class FlexibleTasksPlugin extends Plugin {
 				// cannot be reused, even if the text of a different task matches.
 				if (before !== queue.current) queue.known.clear();
 				queue.current = normalized(written);
-				queue.known.add(snapshot);
 				if (before !== undefined) queue.known.add(before);
+				queue.known.delete(snapshot);
+				queue.known.add(snapshot);
 			} catch (error) {
 				if (active()) {
 					new Notice(error === STALE_SOURCE
@@ -340,9 +342,9 @@ export default class FlexibleTasksPlugin extends Plugin {
 				}
 			}
 		}).finally(() => {
-			if (--queue.count === 0) {
-				// Keep a bounded bridge while Reading view catches up with the last write.
-				queue.known = queue.known.has(snapshot) ? new Set([snapshot]) : new Set();
+			if (--queue.count === 0 && queue.known.size > MAX_RETAINED_REVISIONS) {
+				// A second pane may still be displaying an earlier plugin revision.
+				queue.known = new Set([...queue.known].slice(-MAX_RETAINED_REVISIONS));
 			}
 		});
 	}

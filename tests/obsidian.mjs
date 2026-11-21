@@ -240,6 +240,36 @@ try {
 			}
 		});
 
+		await run("a delayed Reading pane can act after two completed writes in its peer", async (t) => {
+			const name = "Peer preview.md";
+			const row = "| - [ ] | - [ ] | - [ ] |";
+			const initial = `# Peer preview\n\n| A | B | C |\n| --- | --- | --- |\n${row}\n`;
+			await t.app.vault.create(name, initial);
+			await t.open(name);
+			const other = t.app.workspace.getLeaf("split");
+			try {
+				await t.open(name, "preview", false, other);
+				await t.wait(() => t.cells().length === 3 && t.cells(other).length === 3, "both Reading panes");
+				const renderer = other.view.previewMode.renderer;
+				const queueRender = renderer.queueRender;
+				renderer.queueRender = () => {};
+				try {
+					t.cells()[0].click();
+					await t.wait(() => t.cells()[0]?.checked, "first save and redraw");
+					t.cells()[1].click();
+					await t.wait(() => t.cells()[1]?.checked, "second save and redraw");
+					t.check(renderer.lastText, initial, "Peer still shows original revision");
+					t.cells(other)[2].click();
+					const expected = initial.replace(row, "| - [x] | - [x] | - [x] |");
+					await t.wait(async () => await t.disk(name) === expected, "third cell saved from delayed pane");
+				} finally {
+					renderer.queueRender = queueRender;
+				}
+			} finally {
+				other.detach();
+			}
+		});
+
 		await run("duplicates, escaped pipes, loose block tasks, quoted tables, links and custom menu", async (t) => {
 			const name = "Edge.md";
 			t.app.vault.setConfig("nativeMenus", false);
@@ -370,10 +400,15 @@ try {
 			await t.wait(() => t.cells().length === 2 && !t.cells()[0].checked, "unchecked task");
 			const initial = await t.disk(name);
 			const original = t.app.vault.process;
-			t.app.vault.process = async () => { throw new Error("Injected write failure"); };
+			const plugin = t.app.plugins.getPlugin("flexible-tasks");
+			let attempted = false;
+			t.app.vault.process = async () => {
+				attempted = true;
+				throw new Error("Injected write failure");
+			};
 			try {
 				t.cells()[0].click();
-				await t.wait(() => document.body.textContent.includes("the task could not be saved"), "save failure reported");
+				await t.wait(() => attempted && plugin.writes.get(t.file(name))?.count === 0, "failed write settled");
 				t.check(t.cells()[0].checked, false, "Checkbox after failed write");
 				t.check(await t.disk(name), initial, "File after failed write");
 			} finally {
@@ -412,10 +447,10 @@ try {
 			await t.wait(() => t.cells().length === 8, "backfill existing preview");
 		});
 
-		await run("the default theme and Minimal style native checkbox controls", async (t) => {
+		await run("the default and installed themes style native checkbox controls", async (t) => {
 			const css = t.app.customCss;
 			const initial = css.theme;
-			const themes = css.isThemeInstalled("Minimal") ? ["", "Minimal"] : [""];
+			const themes = ["", ...["Minimal", "Sereno"].filter((theme) => css.isThemeInstalled(theme))];
 			const sizes = {};
 			try {
 				for (const theme of themes) {
@@ -428,6 +463,8 @@ try {
 					t.check(styled(input), styled(native), "Native geometry and border radius");
 					t.check(input.getBoundingClientRect().width > 0, true, "Visible table checkbox");
 					t.check(input.tabIndex, 0, "Keyboard focus");
+					const checked = t.cells().find((input) => input.checked && input.parentElement.textContent.trim() === "");
+					t.check(checked.parentElement.textContent, "", "No stray text beside a checked box");
 					sizes[theme || "default"] = styled(input);
 				}
 			} finally {
