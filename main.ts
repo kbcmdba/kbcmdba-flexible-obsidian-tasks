@@ -3,23 +3,30 @@
 import {
 	App,
 	Editor,
+	MarkdownRenderChild,
+	MarkdownView,
+	Menu,
+	Notice,
 	Plugin,
 	PluginSettingTab,
 	Setting,
-	Menu,
-	Notice,
 	TFile,
-	MarkdownView,
-	type SettingDefinitionItem,
+	type MarkdownFileInfo,
+	type MarkdownPostProcessorContext,
 } from "obsidian";
 
-/** A table cell whose text is a task: list marker, [status] box, optional label. */
-const TASK_CELL_RE = /^\s*[-*+]\s+\[(.)\]\s*(.*)$/;
-/** A block-list task line in the source (any indentation). */
-const TASK_LINE_RE = /^\s*[-*+]\s+\[.\]/;
+import {
+	cellMarker,
+	editorMarker,
+	findTables,
+	listMarker,
+	normalized,
+	renderedMarker,
+	replaceStatus,
+	type Marker,
+} from "./markdown";
 
-/** Statuses offered in the right-click menu. Rendering supports any character. */
-const MENU_STATUSES: ReadonlyArray<{ char: string; label: string }> = [
+const MENU_STATUSES = [
 	{ char: " ", label: "To do" },
 	{ char: "x", label: "Done" },
 	{ char: "/", label: "In progress" },
@@ -29,445 +36,381 @@ const MENU_STATUSES: ReadonlyArray<{ char: string; label: string }> = [
 	{ char: "!", label: "Important" },
 ];
 
-const isDone = (c: string): boolean => c === "x" || c === "X";
-
-/** Statuses that strike through the label (finished or abandoned work). */
-const STRIKETHROUGH = new Set(["x", "X", "-", ">"]);
-const isStruck = (c: string): boolean => STRIKETHROUGH.has(c);
-
-/** The statuses the plugin plans for (its menu) plus uppercase done. */
-const PLANNED = new Set([...MENU_STATUSES.map((s) => s.char), "X"]);
-/**
- * The value the THEME should render for a status. Planned statuses pass through
- * so the theme draws their icon; an "unplanned"/off-book character is surfaced
- * with the Important indicator so it stands out instead of silently looking done.
- * The source file always keeps the real character - this only affects data-task.
- */
-const themeTask = (c: string): string => (PLANNED.has(c) ? c : "!");
-
-/** Human-readable status name for a hover tooltip (theme-independent fallback). */
-const statusTooltip = (c: string): string => {
-	const known = MENU_STATUSES.find((s) => s.char === c);
-	const name = known ? known.label : isDone(c) ? "Done" : `Custom "${c}"`;
-	return `Task status: ${name}`;
-};
+const isDone = (status: string) => status.toLowerCase() === "x";
+const themeStatus = (status: string) =>
+	isDone(status) ? "x" : MENU_STATUSES.some(({ char }) => char === status) ? status : "!";
+const FOREIGN_MARKDOWN = ".internal-embed, .markdown-embed, .markdown-source-view";
 
 interface FlexibleTasksSettings {
 	styleBlockTasks: boolean;
 }
-const DEFAULT_SETTINGS: FlexibleTasksSettings = {
-	styleBlockTasks: true,
-};
+
+const DEFAULT_SETTINGS: FlexibleTasksSettings = { styleBlockTasks: true };
+
+interface Target {
+	line: number;
+	cell?: number;
+	identity: string;
+}
+
+interface Task {
+	target: Target;
+	input: HTMLInputElement;
+}
+
+interface PendingWrites {
+	tail: Promise<void>;
+	count: number;
+	current?: string;
+	known: Set<string>;
+}
+
+const STALE_SOURCE = new Error("Stale Markdown source");
+
+function getMarker(line: string | undefined, target: Target): Marker | null {
+	if (line === undefined) return null;
+	return target.cell === undefined ? listMarker(line) : cellMarker(line, target.cell);
+}
+
+function statuses(menu: Menu, current: string, select: (char: string) => void) {
+	for (const { char, label } of MENU_STATUSES) {
+		menu.addItem((item) => item
+			.setTitle(`${label}  [${char}]`)
+			.setChecked(char === current || (char === "x" && isDone(current)))
+			.onClick(() => select(char)));
+	}
+}
 
 export default class FlexibleTasksPlugin extends Plugin {
 	settings: FlexibleTasksSettings = DEFAULT_SETTINGS;
-	private scanQueued = false;
+	private active = false;
+	private loadId = 0;
+	private readonly rendered = new Set<MarkdownRenderChild>();
+	private readonly wiredBlocks = new WeakSet<HTMLInputElement>();
+	private readonly writes = new WeakMap<TFile, PendingWrites>();
+	private source = { text: "", normalized: "", lines: [""] };
 
 	async onload() {
-		await this.loadSettings();
+		const loadId = ++this.loadId;
+		const saved = (await this.loadData()) as Partial<FlexibleTasksSettings> | null;
+		if (loadId !== this.loadId) return;
+		this.settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+		this.active = true;
 		this.addSettingTab(new FlexibleTasksSettingTab(this.app, this));
-
-		// Obsidian hands markdown post-processors DETACHED section fragments that
-		// may not contain the table, so we don't process through them. Instead we
-		// use render/layout events as a trigger and scan the attached reading-view
-		// containers directly.
-		this.registerMarkdownPostProcessor(() => this.queueScan());
-		this.registerEvent(
-			this.app.workspace.on("layout-change", () => this.queueScan())
-		);
-		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", () => this.queueScan())
-		);
-		// Editor (Live Preview / source) right-click: add a status submenu, since
-		// the editor owns its context menu and our in-DOM boxes can't intercept it.
-		this.registerEvent(
-			this.app.workspace.on("editor-menu", (menu, editor) =>
-				this.addStatusSubmenu(menu, editor)
-			)
-		);
-		this.app.workspace.onLayoutReady(() => this.queueScan());
-
-		// Live Preview block tasks defer to the theme: Obsidian renders its own
-		// native checkbox and stamps data-task on the .HyperMD-task-line, which the
-		// checkbox theme styles. We inject nothing into the editor - setting a custom
-		// status there goes through the "Checkbox choices" submenu on the editor
-		// context menu (registered above).
+		this.registerMarkdownPostProcessor((el, ctx) => this.processSection(el, ctx));
+		this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, info) =>
+			this.addStatusSubmenu(menu, editor, info)));
+		// A preview can already be built when the plugin is enabled. Later renders
+		// go directly through the registered processor, including restored notes.
+		this.refreshPreviews();
 	}
 
-	async loadSettings() {
-		const saved = (await this.loadData()) as Partial<FlexibleTasksSettings> | null;
-		this.settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+	onunload() {
+		this.loadId++;
+		this.active = false;
+		for (const section of this.rendered) section.unload();
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-		this.queueScan();
+		this.refreshPreviews();
 	}
 
-	/** Coalesce bursts of triggers into a single deferred scan. */
-	private queueScan() {
-		if (this.scanQueued) return;
-		this.scanQueued = true;
-		window.setTimeout(() => {
-			this.scanQueued = false;
-			this.scanReadingViews();
-		}, 50);
-	}
-
-	private scanReadingViews() {
-		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-			const view = leaf.view;
-			if (!(view instanceof MarkdownView)) continue;
-			// Boxes render in READING view only. In the editor (Live Preview /
-			// source) we leave Obsidian's native checkboxes in place and offer the
-			// "Checkbox choices" submenu instead - injecting our boxes into the
-			// editor's CM6 DOM is what was blocking that submenu from working.
-			if (view.getMode() !== "preview") continue;
-
-			// Task cells inside tables. Headers and already-decorated cells no
-			// longer contain "- [ ] ..." text, so they simply won't match.
-			view.contentEl
-				.querySelectorAll<HTMLTableCellElement>("td, th")
-				.forEach((cell) => {
-					const match = (cell.textContent ?? "").match(TASK_CELL_RE);
-					if (!match) return;
-					const table = cell.closest("table");
-					if (!table) return;
-					this.decorateCell(cell, match[1], (match[2] ?? "").trim(), view, table);
-				});
-
-			// Block-list tasks outside tables (opt-in).
-			if (this.settings.styleBlockTasks) {
-				// Exclude our synthesized table-cell li's - they carry task-list-item
-				// so themes style them, but they are not source block tasks.
-				view.contentEl
-					.querySelectorAll<HTMLLIElement>(
-						"li.task-list-item:not(.tot-cell-task)"
-					)
-					.forEach((li) => this.decorateListItem(li, view));
+	private refreshPreviews() {
+		if (!this.active) return;
+		for (const { view } of this.app.workspace.getLeavesOfType("markdown")) {
+			if (view instanceof MarkdownView && view.getMode() === "preview" &&
+				view.previewMode.containerEl.querySelector("td, li.task-list-item")) {
+				view.previewMode.rerender(true);
 			}
 		}
 	}
 
-	// --- Table cells -------------------------------------------------------
-
-	private decorateCell(
-		cell: HTMLTableCellElement,
-		status: string,
-		label: string,
-		view: MarkdownView,
-		table: HTMLTableElement
-	) {
-		cell.empty();
-
-		// Reproduce the task-list DOM that checkbox themes target - a
-		// `ul.contains-task-list > li.task-list-item[data-task] > input.task-list-item-checkbox`
-		// structure - rather than a bare <input>. A lone input only picks up a status
-		// icon from themes (like Minimal) that style `input[data-task]:checked`
-		// standalone; most checkbox themes key on the `li.task-list-item[data-task]`
-		// ancestry, which a bare input in a <td> can't provide - so in those themes
-		// every custom status collapsed to a plain checked box, losing its meaning
-		// (issue #1: prism theme). Recreating the list structure lets each theme's own
-		// selectors match, so Minimal keeps its icons and other themes render their
-		// glyphs too. The `tot-cell-task` class marks these synthesized li's so the
-		// block-task scanner skips them (they must NOT count toward its DOM index).
-		const list = cell.createEl("ul", { cls: "contains-task-list tot-cell-list" });
-		const wrap = list.createEl("li", {
-			cls: "task-list-item tot-task tot-cell-task",
-		});
-		wrap.dataset.task = status;
-		// is-checked mirrors Obsidian's own semantics (done only), so themes that key
-		// on it don't style an in-progress/question status as finished.
-		wrap.toggleClass("is-checked", isDone(status));
-		if (isStruck(status)) wrap.addClass("is-struck");
-
-		const input = wrap.createEl("input", {
-			cls: "task-list-item-checkbox",
-			attr: { type: "checkbox" },
-		});
-		this.paintCheckbox(input, status);
-
-		// Universal safety net: even a theme that styles neither the standalone input
-		// nor the list ancestry still exposes the status on hover, so it's never lost.
-		wrap.title = statusTooltip(status);
-
-		wrap.createSpan({ cls: "tot-task-label", text: label });
-
-		// Interaction is bound to the <li>, not the <input>. Once the input lives
-		// inside li.task-list-item, the active theme's checkbox styling and/or
-		// Obsidian's native task handling sit over the input and swallow its
-		// click/contextmenu, so a listener on the input never fires (0.9.3: menu
-		// gone). The <li> is the stable, full-size target - right-clicking the box
-		// OR the label opens the menu - and the input is made pointer-transparent in
-		// CSS so events fall through to here. Reads the REAL char from
-		// wrap.dataset.task; input.dataset.task may be theme-mapped (e.g. an
-		// unplanned char shows as Important).
-		wrap.addEventListener("click", (evt) => {
-			evt.preventDefault();
-			const current = wrap.dataset.task ?? " ";
-			const next = isDone(current) ? " " : "x";
-			void this.writeCellStatus(view, table, cell, next, wrap, input);
-		});
-		wrap.addEventListener("contextmenu", (evt) =>
-			this.showStatusMenu(evt, wrap.dataset.task ?? " ", (char) => {
-				void this.writeCellStatus(view, table, cell, char, wrap, input);
-			})
-		);
-	}
-
-	// --- Block-list tasks --------------------------------------------------
-
-	private decorateListItem(li: HTMLLIElement, view: MarkdownView) {
-		if (li.hasClass("tot-wired")) return;
-		const input = li.querySelector<HTMLInputElement>(
-			":scope > input.task-list-item-checkbox"
-		);
-		if (!input) return;
-		li.addClass("tot-wired");
-
-		// Surface an unplanned/off-book status via the Important indicator instead of
-		// letting it fall through to the theme's plain "checked" look (which reads as
-		// done). Display only - Obsidian's native toggle writes from the source line,
-		// not this attribute, so the real character is untouched.
-		const raw = li.getAttribute("data-task") || " ";
-		const mapped = themeTask(raw);
-		if (mapped !== raw) {
-			li.setAttribute("data-task", mapped);
-			input.setAttribute("data-task", mapped);
+	private getSource(text: string) {
+		if (text !== this.source.text) {
+			const source = normalized(text);
+			this.source = { text, normalized: source, lines: source.split("\n") };
 		}
-
-		// Defer rendering to the theme: keep Obsidian's native (themed) checkbox and
-		// its native left-click toggle, and only add a right-click status menu for
-		// custom statuses. We used to replace the checkbox with our own box, but on
-		// foldable parent items the collapse affordance overlays that box and
-		// swallows every pointer event, so parent tasks couldn't be clicked or
-		// right-clicked at all. The native checkbox has no such problem.
-		input.addEventListener("contextmenu", (evt) =>
-			this.showStatusMenu(evt, li.getAttribute("data-task") || " ", (char) => {
-				void this.writeBlockStatus(view, li, char);
-			})
-		);
+		return this.source;
 	}
 
-	// --- Shared helpers ----------------------------------------------------
-
-	/**
-	 * Set a native checkbox to reflect a status so the THEME renders the icon.
-	 * To-do is unchecked with no data-task; every other status is checked and
-	 * carries data-task="<char>" (what theme selectors key off).
-	 */
-	paintCheckbox(input: HTMLInputElement, status: string) {
-		const todo = status === " ";
-		input.checked = !todo;
-		if (todo) delete input.dataset.task;
-		else input.dataset.task = themeTask(status);
-	}
-
-	showStatusMenu(
-		evt: MouseEvent,
-		current: string,
-		onPick: (char: string) => void
-	) {
-		evt.preventDefault();
-		evt.stopPropagation();
-		const menu = new Menu();
-		for (const s of MENU_STATUSES) {
-			menu.addItem((item) =>
-				item
-					.setTitle(`${s.label}  [${s.char}]`)
-					.setChecked(current === s.char)
-					.onClick(() => onPick(s.char))
-			);
-		}
-		menu.showAtMouseEvent(evt);
-	}
-
-	/**
-	 * Add a "Checkbox choices" submenu to the editor context menu (Live Preview /
-	 * source), targeting the [status] marker nearest the click position.
-	 */
-	private addStatusSubmenu(menu: Menu, editor: Editor) {
-		const cursor = editor.getCursor();
-		const line = editor.getLine(cursor.line);
-		// Only offer on task-ish lines (a block task, or a table row with a marker).
-		if (!TASK_LINE_RE.test(line) && !line.includes("|")) return;
-		const target = this.findMarkerNear(line, cursor.ch);
-		if (!target) return;
-
-		menu.addItem((item) => {
-			item.setTitle("Checkbox choices");
-			const sub = (
-				item as unknown as { setSubmenu: () => Menu }
-			).setSubmenu();
-			for (const s of MENU_STATUSES) {
-				sub.addItem((sub_item) =>
-					sub_item
-						.setTitle(`${s.label}  [${s.char}]`)
-						.setChecked(target.char === s.char)
-						.onClick(() =>
-							editor.replaceRange(
-								`[${s.char}]`,
-								{ line: cursor.line, ch: target.start },
-								{ line: cursor.line, ch: target.start + 3 }
-							)
-						)
-				);
-			}
-		});
-	}
-
-	/** Find the [x]-style marker nearest column `ch` on a line. */
-	private findMarkerNear(
-		line: string,
-		ch: number
-	): { start: number; char: string } | null {
-		const re = /\[(.)\]/g;
-		let best: { start: number; char: string } | null = null;
-		let bestDist = Infinity;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(line)) !== null) {
-			const dist = Math.abs(ch - (m.index + 1));
-			if (dist < bestDist) {
-				bestDist = dist;
-				best = { start: m.index, char: m[1] };
-			}
-		}
-		return best;
-	}
-
-	// --- Write-back --------------------------------------------------------
-
-	/**
-	 * Rewrite a table cell's [status] marker in source. Maps DOM position:
-	 * table index in the view -> block; DOM row r -> blockStart + (r ? r+1 : 0)
-	 * (the +1 skips the :--- delimiter row); DOM column c -> c-th pipe field.
-	 */
-	private async writeCellStatus(
-		view: MarkdownView,
-		table: HTMLTableElement,
-		cell: HTMLTableCellElement,
-		newChar: string,
-		wrap: HTMLElement,
-		input: HTMLInputElement
-	) {
-		const file = view.file;
+	private processSection(el: HTMLElement, ctx: MarkdownPostProcessorContext) {
+		if (!this.active || el.closest(FOREIGN_MARKDOWN)) return;
+		const tables = Array.from(el.querySelectorAll<HTMLTableElement>("table")).filter((table) =>
+			!table.parentElement?.closest(`table, ${FOREIGN_MARKDOWN}`));
+		const blocks = this.settings.styleBlockTasks
+			? el.querySelectorAll<HTMLLIElement>("li.task-list-item[data-line]:not(.tot-cell-task)")
+			: [];
+		if (!tables.length && !blocks.length) return;
+		const info = ctx.getSectionInfo(el);
+		if (!info || !ctx.sourcePath) return;
+		const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
 		if (!(file instanceof TFile)) return;
+		const { lines } = this.getSource(info.text);
+		if (info.lineStart < 0 || info.lineEnd >= lines.length) return;
 
-		const row = cell.parentElement as HTMLTableRowElement | null;
-		if (!row) return;
-		const rowIndex = row.rowIndex;
-		const colIndex = cell.cellIndex;
+		const cleanups: Array<() => void> = [];
+		const tasks = new WeakMap<Element, Task>();
+		let anchor: HTMLInputElement | undefined;
+		const bind = (element: Element, task: Task) => {
+			tasks.set(element, task);
+			anchor ??= task.input;
+		};
 
-		const domTables = Array.from(view.contentEl.querySelectorAll("table"));
-		const tableIndex = domTables.indexOf(table);
-		if (tableIndex < 0) return;
-
-		// vault.process is an atomic read-modify-write (no read/modify race).
-		let changed = false;
-		await this.app.vault.process(file, (content) => {
-			const lines = content.split("\n");
-			const blocks = this.findTableBlocks(lines);
-			if (tableIndex >= blocks.length) {
-				new Notice("Flexible Tasks: couldn't map the table to the source.");
-				return content;
-			}
-			const srcLineNo = blocks[tableIndex] + (rowIndex === 0 ? 0 : rowIndex + 1);
-			if (srcLineNo < 0 || srcLineNo >= lines.length) return content;
-
-			const rewritten = this.rewriteCellStatus(lines[srcLineNo], colIndex, newChar);
-			if (rewritten === null || rewritten === lines[srcLineNo]) return content;
-			lines[srcLineNo] = rewritten;
-			changed = true;
-			return lines.join("\n");
-		});
-
-		// Repaint optimistically on success; Obsidian also re-renders off the new
-		// source (which re-runs decorateCell), so this just avoids any flash.
-		if (changed) {
-			wrap.dataset.task = newChar;
-			wrap.toggleClass("is-checked", isDone(newChar));
-			wrap.toggleClass("is-struck", isStruck(newChar));
-			wrap.title = statusTooltip(newChar);
-			this.paintCheckbox(input, newChar);
-		}
-	}
-
-	/**
-	 * Rewrite a block-list task's [status] marker. The k-th `li.task-list-item`
-	 * in the view maps to the k-th block-task line in the source (table task
-	 * lines start with "|" and don't match, so the two lists stay in sync).
-	 */
-	private async writeBlockStatus(
-		view: MarkdownView,
-		li: HTMLLIElement,
-		newChar: string
-	) {
-		const file = view.file;
-		if (!(file instanceof TFile)) return;
-
-		// Must match scanReadingViews' selector exactly - our synthesized cell li's
-		// carry task-list-item but are not source block tasks, so excluding them keeps
-		// the k-th DOM task aligned with the k-th block-task line in the source.
-		const domTasks = Array.from(
-			view.contentEl.querySelectorAll("li.task-list-item:not(.tot-cell-task)")
-		);
-		const index = domTasks.indexOf(li);
-		if (index < 0) return;
-
-		// vault.process is an atomic read-modify-write (no read/modify race).
-		await this.app.vault.process(file, (content) => {
-			const lines = content.split("\n");
-			let seen = -1;
-			let target = -1;
-			for (let i = 0; i < lines.length; i++) {
-				if (TASK_LINE_RE.test(lines[i])) {
-					seen++;
-					if (seen === index) {
-						target = i;
-						break;
+		// Section positions come from the same render pass as the HTML. A match
+		// also needs the table geometry, keeping generated HTML in other sections
+		// from influencing this section's source positions.
+		const sourceTables = tables.length ? findTables(lines, info.lineStart, info.lineEnd) : [];
+		if (sourceTables.length === tables.length) {
+			tables.forEach((table, index) => {
+				const { header, end, columns } = sourceTables[index];
+				if (table.rows.length !== end - header || table.tHead?.rows[0]?.cells.length !== columns) return;
+				for (const row of Array.from(table.rows).slice(1)) {
+					const line = header + row.rowIndex + 1;
+					for (const cell of Array.from(row.cells)) {
+						const first = cell.firstChild;
+						if (first?.nodeType !== 3) continue;
+						const prefix = renderedMarker(first.textContent ?? "");
+						if (!prefix) continue;
+						const marker = cellMarker(lines[line], cell.cellIndex);
+						if (!marker || prefix.status !== marker.status) continue;
+						const target = { line: line - info.lineStart, cell: cell.cellIndex, identity: marker.identity };
+						const { wrap, task, cleanup } = decorateCell(cell, first as Text, prefix.prefix, marker.status, target);
+						bind(wrap, task);
+						tasks.set(task.input, task);
+						cleanups.push(cleanup);
 					}
 				}
+			});
+		}
+
+		for (const li of Array.from(blocks)) {
+			if (li.closest(`table, ${FOREIGN_MARKDOWN}`)) continue;
+			const input = li.querySelector<HTMLInputElement>(
+				":scope > input.task-list-item-checkbox, :scope > p > input.task-list-item-checkbox");
+			const relative = li.dataset.line ?? "";
+			if (!input || this.wiredBlocks.has(input) || !/^\d+$/.test(relative) || input.dataset.line !== relative) continue;
+			const line = info.lineStart + Number(relative);
+			if (line > info.lineEnd) continue;
+			const marker = listMarker(lines[line]);
+			if (!marker || marker.status !== (li.dataset.task || " ")) continue;
+			this.wiredBlocks.add(input);
+			li.classList.add("tot-block-task");
+			bind(input, { input, target: { line: Number(relative), identity: marker.identity } });
+			const attributes = [li, input].map((node) => node.getAttribute("data-task"));
+			const mapped = themeStatus(marker.status);
+			if (mapped === "!" && marker.status !== mapped) {
+				li.dataset.task = input.dataset.task = mapped;
 			}
-			if (target < 0) {
-				new Notice("Flexible Tasks: couldn't map the task to the source.");
-				return content;
+			cleanups.push(() => {
+				this.wiredBlocks.delete(input);
+				li.classList.remove("tot-block-task");
+				if (mapped !== "!" || marker.status === mapped) return;
+				[li, input].forEach((node, index) => {
+					if (node.dataset.task !== mapped) return;
+					const original = attributes[index];
+					if (original === null) node.removeAttribute("data-task");
+					else node.dataset.task = original;
+				});
+			});
+		}
+		if (!anchor) return;
+
+		const capture = (task: Task) => {
+			if (!this.active || !el.isConnected || !el.contains(task.input)) return null;
+			if (task.target.cell === undefined && !this.settings.styleBlockTasks) return null;
+			const view = this.app.workspace.getLeavesOfType("markdown")
+				.map(({ view }) => view)
+				.find((view): view is MarkdownView => view instanceof MarkdownView &&
+					view.getMode() === "preview" && view.file === file &&
+					view.previewMode.containerEl.contains(el));
+			if (!view) return null;
+			const current = ctx.getSectionInfo(el);
+			if (!current) return null;
+			const source = this.getSource(current.text);
+			const line = current.lineStart + task.target.line;
+			const marker = getMarker(source.lines[line], task.target);
+			if (line > current.lineEnd || marker?.identity !== task.target.identity) {
+				new Notice("Flexible Tasks: the task changed. Try again after the note updates.");
+				return null;
 			}
-			const rewritten = lines[target].replace(/\[.\]/, `[${newChar}]`);
-			if (rewritten === lines[target]) return content;
-			// Rendering is the theme's job now; Obsidian re-renders off the new
-			// source, so we don't repaint anything ourselves.
-			lines[target] = rewritten;
-			return lines.join("\n");
+			return { file, line, marker, snapshot: source.normalized };
+		};
+
+		const taskAt = (evt: MouseEvent, selector: string) => {
+			const origin = evt.target as Element | null;
+			if (!origin?.closest || origin.closest("a, button, [contenteditable=true]")) return undefined;
+			const node = origin.closest(selector);
+			return node ? tasks.get(node) : undefined;
+		};
+		const click = (evt: MouseEvent) => {
+			const task = taskAt(evt, ".tot-cell-task");
+			if (!task || evt.defaultPrevented) return;
+			evt.preventDefault();
+			evt.stopPropagation();
+			const request = capture(task);
+			if (request) this.writeStatus(request, task);
+		};
+		const context = (evt: MouseEvent) => {
+			const task = taskAt(evt, ".tot-cell-task, input.task-list-item-checkbox");
+			if (!task || evt.defaultPrevented) return;
+			const request = capture(task);
+			if (!request) return;
+			evt.preventDefault();
+			evt.stopPropagation();
+			const menu = new Menu();
+			statuses(menu, request.marker.status, (char) => {
+				const current = capture(task);
+				if (current?.file === request.file && current.snapshot === request.snapshot) {
+					this.writeStatus(request, task, char);
+				} else if (current) {
+					new Notice("Flexible Tasks: the task changed while the menu was open.");
+				}
+			});
+			menu.showAtMouseEvent(evt);
+		};
+
+		// Obsidian keeps offscreen sections alive and unloads children when their
+		// rendered DOM is replaced. Anchor to the input, since the wrapper section
+		// itself may be reused on a full rerender.
+		const child = new MarkdownRenderChild(anchor);
+		el.addEventListener("click", click);
+		el.addEventListener("contextmenu", context);
+		this.rendered.add(child);
+		child.register(() => {
+			el.removeEventListener("click", click);
+			el.removeEventListener("contextmenu", context);
+			for (const cleanup of cleanups) cleanup();
+			this.rendered.delete(child);
+		});
+		ctx.addChild(child);
+	}
+
+	private writeStatus(
+		request: { file: TFile; line: number; snapshot: string },
+		task: Task,
+		selected?: string
+	) {
+		const { file, line, snapshot } = request;
+		let pending = this.writes.get(file);
+		if (!pending) {
+			pending = { tail: Promise.resolve(), count: 0, known: new Set() };
+			this.writes.set(file, pending);
+		}
+		const queue = pending;
+		const loadId = this.loadId;
+		const active = () => this.active && this.loadId === loadId;
+		queue.count++;
+		queue.tail = queue.tail.then(async () => {
+			if (!active()) return;
+			let before: string | undefined;
+			try {
+				// Obsidian may reuse existing DOM for the original Markdown.
+				// Write the source and let the renderer display the new revision.
+				const written = await this.app.vault.process(file, (text) => {
+					const source = this.getSource(text);
+					if (!active() || this.app.vault.getAbstractFileByPath(file.path) !== file ||
+						(source.normalized !== snapshot &&
+							(source.normalized !== queue.current || !queue.known.has(snapshot)))) {
+						throw STALE_SOURCE;
+					}
+					// Saving through the vault must never overwrite a dirty editor
+					// in a split pane, including edits that have yet to reach disk.
+					for (const { view } of this.app.workspace.getLeavesOfType("markdown")) {
+						if (view instanceof MarkdownView && view.file === file && view.getMode() === "source" &&
+							normalized(view.getViewData()) !== source.normalized) throw STALE_SOURCE;
+					}
+					const marker = getMarker(source.lines[line], task.target);
+					if (marker?.identity !== task.target.identity) throw STALE_SOURCE;
+					before = source.normalized;
+					const status = selected ?? (isDone(marker.status) ? " " : "x");
+					return replaceStatus(text, line, marker, status);
+				});
+				// An external edit starts a new lineage. Positions captured before it
+				// cannot be reused, even if the text of a different task matches.
+				if (before !== queue.current) queue.known.clear();
+				queue.current = normalized(written);
+				queue.known.add(snapshot);
+				if (before !== undefined) queue.known.add(before);
+			} catch (error) {
+				if (active()) {
+					new Notice(error === STALE_SOURCE
+						? "Flexible Tasks: the note changed. Try again after the note updates."
+						: "Flexible Tasks: the task could not be saved.");
+				}
+			}
+		}).finally(() => {
+			if (--queue.count === 0) {
+				// Keep a bounded bridge while Reading view catches up with the last write.
+				queue.known = queue.known.has(snapshot) ? new Set([snapshot]) : new Set();
+			}
 		});
 	}
 
-	/** Return the starting line index (header row) of each Markdown table block. */
-	private findTableBlocks(lines: string[]): number[] {
-		const starts: number[] = [];
-		const isDelim = (s: string) => /^[\s|:-]+$/.test(s) && s.includes("-");
-		for (let i = 0; i + 1 < lines.length; i++) {
-			if (lines[i].includes("|") && isDelim(lines[i + 1])) starts.push(i);
-		}
-		return starts;
-	}
+	private addStatusSubmenu(menu: Menu, editor: Editor, info: MarkdownFileInfo) {
+		const file = info.file;
+		if (!file) return;
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+		if (!line.includes("|") && !listMarker(line)) return;
+		const source = editor.getValue();
+		const target = editorMarker(source, cursor.line, cursor.ch);
+		if (!target) return;
 
-	private rewriteCellStatus(
-		line: string,
-		colIndex: number,
-		newChar: string
-	): string | null {
-		const parts = line.split("|");
-		const hasLeading = parts.length > 0 && parts[0].trim() === "";
-		const target = (hasLeading ? 1 : 0) + colIndex;
-		if (target < 0 || target >= parts.length) return null;
-		const field = parts[target];
-		const replaced = field.replace(/\[.\]/, `[${newChar}]`);
-		if (replaced === field) return null;
-		parts[target] = replaced;
-		return parts.join("|");
+		const select = (char: string) => {
+			if (!this.active || info.file !== file || editor.getValue() !== source ||
+				(info instanceof MarkdownView && info.getMode() !== "source")) {
+				new Notice("Flexible Tasks: the task changed while the menu was open.");
+				return;
+			}
+			if (target.status === char) return;
+			editor.replaceRange(char, { line: cursor.line, ch: target.column },
+				{ line: cursor.line, ch: target.column + target.raw.length });
+		};
+		menu.addItem((item) => {
+			item.setTitle("Checkbox choices");
+			const submenu = (item as typeof item & { setSubmenu?: () => Menu }).setSubmenu?.();
+			if (submenu) statuses(submenu, target.status, select);
+			else item.onClick((evt) => {
+				const choices = new Menu();
+				statuses(choices, target.status, select);
+				if ("clientX" in evt) choices.showAtMouseEvent(evt);
+				else choices.showAtPosition({ x: 0, y: 0 });
+			});
+		});
 	}
 }
 
+function decorateCell(cell: HTMLTableCellElement, first: Text, prefix: string, initial: string, target: Target) {
+	const original = first.data;
+	first.deleteData(0, prefix.length);
+	const content = Array.from(cell.childNodes);
+	const list = cell.createEl("ul", { cls: "contains-task-list tot-cell-list" });
+	const wrap = list.createEl("li", { cls: "task-list-item tot-cell-task" });
+	const input = wrap.createEl("input", { cls: "task-list-item-checkbox", attr: { type: "checkbox" } });
+	const label = wrap.createSpan({ cls: "tot-cell-label" });
+	label.append(...content);
+	const heading = cell.closest("table")?.tHead?.rows[0]?.cells[cell.cellIndex]?.textContent?.trim();
+	const row = (cell.parentElement as HTMLTableRowElement).rowIndex;
+	input.setAttribute("aria-label", label.textContent?.trim() || `${heading || "Table task"}, row ${row}`);
+	const mapped = themeStatus(initial);
+	input.checked = initial !== " ";
+	wrap.classList.toggle("is-checked", input.checked);
+	wrap.dataset.task = input.checked ? mapped : "";
+	if (input.checked) input.dataset.task = mapped;
+	const name = MENU_STATUSES.find(({ char }) => char === initial)?.label ??
+		(isDone(initial) ? "Done" : `Custom "${initial}"`);
+	wrap.title = `Task status: ${name}`;
+	return {
+		wrap,
+		task: { target, input },
+		cleanup: () => {
+			if (list.parentElement !== cell) return;
+			first.data = original;
+			list.replaceWith(...Array.from(label.childNodes));
+		},
+	};
+}
 class FlexibleTasksSettingTab extends PluginSettingTab {
 	plugin: FlexibleTasksPlugin;
 
@@ -478,13 +421,13 @@ class FlexibleTasksSettingTab extends PluginSettingTab {
 
 	// Declarative settings (Obsidian 1.13+): the settings show up in Obsidian's
 	// settings search. On older versions this is ignored and display() runs.
-	getSettingDefinitions(): SettingDefinitionItem[] {
+	getSettingDefinitions() {
 		return [
 			{
 				name: "Style block-list tasks too",
 				desc: "Also add the right-click status menu to ordinary (non-table) list tasks in Reading view.",
 				control: {
-					type: "toggle",
+					type: "toggle" as const,
 					key: "styleBlockTasks",
 					defaultValue: DEFAULT_SETTINGS.styleBlockTasks,
 				},
